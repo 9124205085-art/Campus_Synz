@@ -5,6 +5,12 @@ from extensions import db
 from models import Course, Department, User
 from utils.decorators import role_required
 from utils.helpers import generate_username, get_or_create_department, normalize_department_name
+from utils.user_service import (
+    check_dept_code_unique,
+    check_employee_id_unique,
+    parse_department_payload,
+    parse_staff_payload,
+)
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -70,15 +76,23 @@ def list_departments():
 @role_required("admin")
 def add_department():
     data = request.get_json(silent=True) or {}
-    name = normalize_department_name(data.get("name") or "")
-    if not name:
-        return jsonify({"message": "Department name is required."}), 400
+    payload, errors = parse_department_payload(data)
+    if errors:
+        return jsonify({"message": " ".join(errors), "errors": errors}), 400
 
-    existing = Department.query.filter(db.func.lower(Department.name) == name.lower()).first()
-    if existing:
-        return jsonify({"message": "Department already exists."}), 409
+    name = normalize_department_name(payload["name"])
+    if Department.query.filter(db.func.lower(Department.name) == name.lower()).first():
+        return jsonify({"message": "Department name already exists."}), 409
+    if not check_dept_code_unique(payload["code"]):
+        return jsonify({"message": "Department code already exists."}), 409
 
-    dept = Department(name=name)
+    dept = Department(
+        name=name,
+        code=payload["code"],
+        degree=payload["degree"],
+        duration=payload["duration"],
+        status=payload["status"],
+    )
     db.session.add(dept)
     db.session.commit()
     return jsonify({"message": "Department added.", "department": _department_detail(dept)}), 201
@@ -103,17 +117,24 @@ def update_department(dept_id):
         return jsonify({"message": "Department not found."}), 404
 
     data = request.get_json(silent=True) or {}
-    name = normalize_department_name(data.get("name") or "")
-    if not name:
-        return jsonify({"message": "Department name is required."}), 400
+    payload, errors = parse_department_payload(data)
+    if errors:
+        return jsonify({"message": " ".join(errors), "errors": errors}), 400
 
+    name = normalize_department_name(payload["name"])
     clash = Department.query.filter(
         db.func.lower(Department.name) == name.lower(), Department.id != dept_id
     ).first()
     if clash:
         return jsonify({"message": "Another department with this name exists."}), 409
+    if not check_dept_code_unique(payload["code"], dept_id):
+        return jsonify({"message": "Department code already exists."}), 409
 
     dept.name = name
+    dept.code = payload["code"]
+    dept.degree = payload["degree"]
+    dept.duration = payload["duration"]
+    dept.status = payload["status"]
     db.session.commit()
     return jsonify({"message": "Department updated.", "department": _department_detail(dept)}), 200
 
@@ -156,29 +177,73 @@ def get_hod(user_id):
     return jsonify({"user": user.to_dict()}), 200
 
 
+def _create_staff_user(data, default_role):
+    payload, errors = parse_staff_payload(data, default_role, require_password=True)
+    department, dept_errors = _resolve_department(data)
+    errors.extend(dept_errors)
+
+    if errors:
+        return None, errors
+
+    if User.query.filter_by(email=payload["email"]).first():
+        return None, ["Email is already registered."]
+    if not check_employee_id_unique(payload["employee_id"]):
+        return None, ["Employee ID is already in use."]
+
+    user = User(
+        employee_id=payload["employee_id"],
+        username=payload["employee_id"].lower(),
+        email=payload["email"],
+        mobile=payload["mobile"],
+        role=payload["role"],
+        designation=payload["designation"],
+        full_name=payload["name"],
+        department_id=department.id,
+        is_active=payload["is_active"],
+    )
+    user.set_password(payload["password"])
+    return user, []
+
+
+def _update_staff_user(user, data):
+    payload, errors = parse_staff_payload(
+        data, user.role, require_password=bool(data.get("password"))
+    )
+    department, dept_errors = _resolve_department(data)
+    errors.extend(dept_errors)
+
+    if errors:
+        return errors
+
+    existing = User.query.filter(User.email == payload["email"], User.id != user.id).first()
+    if existing:
+        return ["Email is already used by another user."]
+    if not check_employee_id_unique(payload["employee_id"], user.id):
+        return ["Employee ID is already in use."]
+
+    user.employee_id = payload["employee_id"]
+    user.username = payload["employee_id"].lower()
+    user.full_name = payload["name"]
+    user.email = payload["email"]
+    user.mobile = payload["mobile"]
+    user.role = payload["role"]
+    user.designation = payload["designation"]
+    user.department_id = department.id
+    user.is_active = payload["is_active"]
+    if payload["password"]:
+        user.set_password(payload["password"])
+    return []
+
+
 @admin_bp.route("/hod", methods=["POST"])
 @jwt_required()
 @role_required("admin")
 def add_hod():
     data = request.get_json(silent=True) or {}
-    name, email, password, errors = _validate_user_fields(data, require_password=True)
-    department, dept_errors = _resolve_department(data)
-    errors.extend(dept_errors)
-
+    user, errors = _create_staff_user(data, "hod")
     if errors:
         return jsonify({"message": " ".join(errors), "errors": errors}), 400
 
-    if User.query.filter_by(email=email).first():
-        return jsonify({"message": "Email is already registered."}), 409
-
-    user = User(
-        username=generate_username(email),
-        email=email,
-        role="hod",
-        full_name=name,
-        department_id=department.id,
-    )
-    user.set_password(password)
     db.session.add(user)
     db.session.commit()
     return jsonify({"message": "HOD added successfully.", "user": user.to_dict()}), 201
@@ -193,22 +258,9 @@ def update_hod(user_id):
         return jsonify({"message": "HOD not found."}), 404
 
     data = request.get_json(silent=True) or {}
-    name, email, password, errors = _validate_user_fields(data, require_password=False)
-    department, dept_errors = _resolve_department(data)
-    errors.extend(dept_errors)
-
+    errors = _update_staff_user(user, data)
     if errors:
         return jsonify({"message": " ".join(errors), "errors": errors}), 400
-
-    existing = User.query.filter(User.email == email, User.id != user_id).first()
-    if existing:
-        return jsonify({"message": "Email is already used by another user."}), 409
-
-    user.full_name = name
-    user.email = email
-    user.department_id = department.id
-    if password:
-        user.set_password(password)
 
     db.session.commit()
     return jsonify({"message": "HOD updated successfully.", "user": user.to_dict()}), 200
@@ -252,24 +304,10 @@ def get_faculty(user_id):
 @role_required("admin")
 def add_faculty():
     data = request.get_json(silent=True) or {}
-    name, email, password, errors = _validate_user_fields(data, require_password=True)
-    department, dept_errors = _resolve_department(data)
-    errors.extend(dept_errors)
-
+    user, errors = _create_staff_user(data, "faculty")
     if errors:
         return jsonify({"message": " ".join(errors), "errors": errors}), 400
 
-    if User.query.filter_by(email=email).first():
-        return jsonify({"message": "Email is already registered."}), 409
-
-    user = User(
-        username=generate_username(email),
-        email=email,
-        role="faculty",
-        full_name=name,
-        department_id=department.id,
-    )
-    user.set_password(password)
     db.session.add(user)
     db.session.commit()
     return jsonify({"message": "Faculty added successfully.", "user": user.to_dict()}), 201
@@ -284,22 +322,9 @@ def update_faculty(user_id):
         return jsonify({"message": "Faculty not found."}), 404
 
     data = request.get_json(silent=True) or {}
-    name, email, password, errors = _validate_user_fields(data, require_password=False)
-    department, dept_errors = _resolve_department(data)
-    errors.extend(dept_errors)
-
+    errors = _update_staff_user(user, data)
     if errors:
         return jsonify({"message": " ".join(errors), "errors": errors}), 400
-
-    existing = User.query.filter(User.email == email, User.id != user_id).first()
-    if existing:
-        return jsonify({"message": "Email is already used by another user."}), 409
-
-    user.full_name = name
-    user.email = email
-    user.department_id = department.id
-    if password:
-        user.set_password(password)
 
     db.session.commit()
     return jsonify({"message": "Faculty updated successfully.", "user": user.to_dict()}), 200

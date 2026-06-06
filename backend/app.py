@@ -17,9 +17,21 @@ def create_app(config_class=Config):
 
   db.init_app(app)
   jwt.init_app(app)
-  CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
+
+  # Fix: supports_credentials=True cannot be used with origins="*"
+  # Specify the exact frontend origin instead
+  CORS(
+    app,
+    resources={r"/api/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173"]}},
+    supports_credentials=True,
+  )
 
   register_routes(app)
+
+  with app.app_context():
+    from database.migrate_marksheet_v2 import apply_marksheet_schema_updates
+
+    apply_marksheet_schema_updates()
 
   @app.route("/api/health", methods=["GET"])
   def health():

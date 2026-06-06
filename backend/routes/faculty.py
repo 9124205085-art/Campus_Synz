@@ -1,14 +1,19 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
+from datetime import datetime
+
 from extensions import db
 from models import MarkSheet, User
 from utils.decorators import role_required
 from utils.helpers import get_or_create_department
 from utils.marksheet_constants import BRANCHES, CO_OPTIONS, DEPARTMENTS, SEMESTERS, YEARS
+from utils.co_attainment_calc import build_faculty_dashboard_stats
 from utils.marksheet_service import (
     build_manual_student_rows,
     build_student_rows,
+    flatten_question_cos,
+    flatten_question_marks,
     marksheet_config_payload,
     query_students,
     validate_assessments,
@@ -24,6 +29,35 @@ def _empty_rows_legacy(num_students, num_questions):
         {"student_name": "", "marks": ["" for _ in range(num_questions)]}
         for _ in range(num_students)
     ]
+
+
+@faculty_bp.route("/dashboard-stats", methods=["GET"])
+@jwt_required()
+@role_required("faculty")
+def faculty_dashboard_stats():
+    faculty_id = int(get_jwt_identity())
+    faculty = User.query.get(faculty_id)
+
+    query = MarkSheet.query.filter_by(faculty_id=faculty_id, is_saved=True)
+    semester = request.args.get("semester")
+    if semester and semester != "all":
+        try:
+            year_str, sem_str = semester.split("-")
+            year = int(year_str)
+            sem = int(sem_str)
+            query = query.filter_by(year=year, semester=sem)
+        except (TypeError, ValueError):
+            pass
+
+    sheets = query.order_by(MarkSheet.updated_at.desc()).all()
+    analytics = build_faculty_dashboard_stats(sheets)
+
+    return jsonify(
+        {
+            "user": faculty.to_dict() if faculty else None,
+            "analytics": analytics,
+        }
+    ), 200
 
 
 @faculty_bp.route("/marksheet-config", methods=["GET"])
@@ -169,13 +203,11 @@ def create_marksheet():
     department = None
     if department_id:
         from models import Department
-
         department = Department.query.get(int(department_id))
     elif department_name:
         department = get_or_create_department(department_name)
     elif faculty and faculty.department_id:
         from models import Department
-
         department = Department.query.get(faculty.department_id)
 
     if not department:
@@ -199,6 +231,7 @@ def create_marksheet():
     if errors:
         return jsonify({"message": " ".join(errors), "errors": errors}), 400
 
+    # Build instance with implicit dynamic data attribute fallbacks
     sheet = MarkSheet(
         faculty_id=faculty_id,
         course_name=course_name,
@@ -245,36 +278,40 @@ def update_marksheet(sheet_id):
         return jsonify({"message": "Mark sheet not found."}), 404
 
     data = request.get_json(silent=True) or {}
-    q_marks = sheet.question_marks or []
+    components = sheet.assessment_components or []
 
     if "question_cos" in data:
-        cos = data["question_cos"]
-        if not isinstance(cos, list) or len(cos) != sheet.num_questions:
-            return jsonify({"message": "Invalid CO mapping for questions."}), 400
-        sheet.question_cos = [str(c) for c in cos]
-
-    if "question_marks" in data:
-        marks = data["question_marks"]
-        _, validated_marks, q_err = validate_question_config(
-            sheet.num_questions, sheet.question_cos, marks
+        cos, _, q_err = validate_question_config(
+            sheet.num_questions, data["question_cos"], None
         )
         if q_err:
             return jsonify({"message": q_err}), 400
-        sheet.question_marks = validated_marks
-        q_marks = validated_marks
+        sheet.question_cos = cos
+
+    if "question_marks" in data:
+        _, marks, q_err = validate_question_config(
+            sheet.num_questions, None, data["question_marks"]
+        )
+        if q_err:
+            return jsonify({"message": q_err}), 400
+        sheet.question_marks = marks
 
     if "student_rows" in data:
         rows = data["student_rows"]
         if not isinstance(rows, list) or len(rows) != sheet.num_students:
             return jsonify({"message": "Invalid student rows count."}), 400
 
-        components = sheet.assessment_components or []
+        q_marks = flatten_question_marks(sheet.question_marks, sheet.num_questions, components)
         cleaned, err = validate_student_rows_for_save(
             rows, components, sheet.num_questions, q_marks
         )
         if err:
             return jsonify({"message": err}), 400
         sheet.student_rows = cleaned
+        sheet.question_marks = q_marks
+        sheet.question_cos = flatten_question_cos(
+            sheet.question_cos, sheet.num_questions, components
+        )
 
     sheet.is_saved = True
     db.session.commit()
@@ -295,3 +332,51 @@ def delete_marksheet(sheet_id):
     db.session.delete(sheet)
     db.session.commit()
     return jsonify({"message": "Mark sheet deleted."}), 200
+
+
+@faculty_bp.route("/marksheets/<int:sheet_id>/submit-co-attainment", methods=["POST"])
+@jwt_required()
+@role_required("faculty")
+def submit_co_attainment(sheet_id):
+    """Faculty submits calculated CO attainment report to department HOD."""
+    faculty_id = int(get_jwt_identity())
+    sheet = MarkSheet.query.filter_by(id=sheet_id, faculty_id=faculty_id).first()
+    if not sheet:
+        return jsonify({"message": "Mark sheet not found."}), 404
+    if not sheet.is_saved:
+        return jsonify({"message": "Save the mark sheet before submitting CO attainment."}), 400
+
+    data = request.get_json(silent=True) or {}
+    threshold = data.get("threshold")
+    weightages = data.get("weightages")
+    submission = data.get("submission")
+
+    if threshold is None or not isinstance(weightages, dict):
+        return jsonify({"message": "Threshold and weightages are required."}), 400
+    if not submission or not isinstance(submission, dict):
+        return jsonify({"message": "CO calculation results are required. Calculate first."}), 400
+
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError):
+        return jsonify({"message": "Invalid passing threshold."}), 400
+
+    total_weight = sum(float(v or 0) for v in weightages.values())
+    if round(total_weight) != 100:
+        return jsonify({"message": f"Weightages must sum to 100%. Currently: {total_weight}%"}), 400
+
+    sheet.passing_threshold = threshold
+    sheet.component_weightages = weightages
+    sheet.co_submission_data = submission
+    sheet.co_submitted = True
+    sheet.co_submitted_at = datetime.utcnow()
+    db.session.commit()
+
+    faculty = User.query.get(faculty_id)
+    return jsonify(
+        {
+            "message": "CO attainment submitted to your department HOD.",
+            "marksheet": sheet.to_dict(),
+            "faculty_name": faculty.full_name if faculty else "",
+        }
+    ), 200

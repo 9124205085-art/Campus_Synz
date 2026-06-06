@@ -11,6 +11,13 @@ const SECTIONS = [
   { id: 'departments', label: 'Departments', type: 'Department' },
 ]
 
+const ADD_LABELS = {
+  hods: 'Add HOD',
+  faculty: 'Add Faculty',
+  courses: 'Add Course',
+  departments: 'Add Department',
+}
+
 export default function AdminDashboard() {
   const [activeSection, setActiveSection] = useState('hods')
   const [stats, setStats] = useState(null)
@@ -62,8 +69,35 @@ export default function AdminDashboard() {
   const openAdd = () => {
     setSelected(null)
     setPanelMode('add')
-    if (activeSection === 'departments') setForm({ name: '' })
-    else setForm({ name: '', email: '', password: '', department_id: '', department: '' })
+    if (activeSection === 'departments') {
+      setForm({ name: '', code: '', degree: 'B.Tech', duration: '4', status: 'active' })
+    } else if (activeSection === 'hods') {
+      setForm({
+        employee_id: '',
+        name: '',
+        email: '',
+        mobile: '',
+        designation: 'hod',
+        is_active: true,
+        password: '',
+        department_id: '',
+        department: '',
+      })
+    } else if (activeSection === 'faculty') {
+      setForm({
+        employee_id: '',
+        name: '',
+        email: '',
+        mobile: '',
+        designation: 'faculty',
+        is_active: true,
+        password: '',
+        department_id: '',
+        department: '',
+      })
+    } else {
+      setForm({ name: '', email: '', password: '', department_id: '', department: '' })
+    }
   }
 
   const openItem = (item) => {
@@ -118,8 +152,15 @@ export default function AdminDashboard() {
         if (panelMode === 'add') await adminAPI.addCourse(payload)
         else await adminAPI.updateCourse(selected.id, payload)
       } else if (activeSection === 'departments') {
-        if (panelMode === 'add') await adminAPI.addDepartment({ name: payload.name })
-        else await adminAPI.updateDepartment(selected.id, { name: payload.name })
+        if (panelMode === 'add') await adminAPI.addDepartment(payload)
+        else
+          await adminAPI.updateDepartment(selected.id, {
+            name: payload.name,
+            code: payload.code,
+            degree: payload.degree,
+            duration: parseInt(payload.duration, 10),
+            status: payload.status,
+          })
       }
 
       setMessage(panelMode === 'add' ? 'Added successfully.' : 'Updated successfully.')
@@ -214,7 +255,7 @@ export default function AdminDashboard() {
           onClick={openAdd}
           className="ml-auto rounded-full border border-navy px-4 py-2 text-sm font-medium text-navy hover:bg-navy hover:text-white"
         >
-          + Add New
+          + {ADD_LABELS[activeSection] || 'Add New'}
         </button>
       </div>
 
@@ -265,8 +306,12 @@ function ItemList({ section, items, onSelect, selectedId }) {
             {section === 'hods' || section === 'faculty' ? (
               <>
                 <p className="font-medium text-slate-800">{item.full_name}</p>
-                <p className="text-sm text-slate-500">{item.email}</p>
-                <p className="text-xs text-slate-400">{item.department}</p>
+                <p className="text-sm text-slate-500">
+                  {item.employee_id} · {item.email}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {item.department} · {item.is_active === false ? 'Inactive' : 'Active'}
+                </p>
               </>
             ) : section === 'courses' ? (
               <>
@@ -280,6 +325,9 @@ function ItemList({ section, items, onSelect, selectedId }) {
             ) : (
               <>
                 <p className="font-medium text-slate-800">{item.name}</p>
+                <p className="text-xs text-slate-400">
+                  {item.code} · {item.degree} · {item.duration}y · {item.status}
+                </p>
                 <p className="text-xs text-slate-400">
                   HOD: {item.hod_count} · Faculty: {item.faculty_count} · Courses:{' '}
                   {item.course_count}

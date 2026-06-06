@@ -1,5 +1,6 @@
 import DepartmentSelect from './DepartmentSelect'
 import FormField from './FormField'
+import SelectField from './SelectField'
 
 export default function AdminDetailPanel({
   type,
@@ -13,21 +14,13 @@ export default function AdminDetailPanel({
 }) {
   const isEdit = mode === 'edit'
   const title =
-    mode === 'add'
-      ? `Add ${type}`
-      : mode === 'edit'
-        ? `Edit ${type}`
-        : `View ${type}`
+    mode === 'add' ? `Add ${type}` : mode === 'edit' ? `Edit ${type}` : `View ${type}`
 
   return (
     <div className="rounded-2xl border border-navy/20 bg-white p-6 shadow-md">
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="text-sm text-slate-500 hover:text-navy"
-        >
+        <button type="button" onClick={onCancel} className="text-sm text-slate-500 hover:text-navy">
           Close
         </button>
       </div>
@@ -45,10 +38,21 @@ export default function AdminDetailPanel({
           {(type === 'HOD' || type === 'Faculty') && (
             <>
               <FormField
+                label="Employee ID"
+                id="employee_id"
+                value={form.employee_id || ''}
+                onChange={(e) =>
+                  setForm({ ...form, employee_id: e.target.value.toUpperCase() })
+                }
+                placeholder="e.g. EMP001"
+              />
+              <FormField
                 label="Name"
                 id="name"
                 value={form.name || form.full_name || ''}
-                onChange={(e) => setForm({ ...form, name: e.target.value, full_name: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, name: e.target.value, full_name: e.target.value })
+                }
               />
               <FormField
                 label="Email"
@@ -56,6 +60,35 @@ export default function AdminDetailPanel({
                 type="email"
                 value={form.email || ''}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
+              <FormField
+                label="Mobile"
+                id="mobile"
+                value={form.mobile || ''}
+                onChange={(e) => setForm({ ...form, mobile: e.target.value })}
+                placeholder="10-digit mobile"
+              />
+              <SelectField
+                label="Designation"
+                id="designation"
+                value={form.designation || (type === 'HOD' ? 'hod' : 'faculty')}
+                onChange={(e) => setForm({ ...form, designation: e.target.value })}
+                options={[
+                  { value: 'hod', label: 'HOD' },
+                  { value: 'faculty', label: 'Faculty' },
+                ]}
+              />
+              <SelectField
+                label="Access Status"
+                id="is_active"
+                value={form.is_active === false ? 'inactive' : 'active'}
+                onChange={(e) =>
+                  setForm({ ...form, is_active: e.target.value === 'active' })
+                }
+                options={[
+                  { value: 'active', label: 'Active — can login' },
+                  { value: 'inactive', label: 'Inactive — blocked' },
+                ]}
               />
               <div>
                 <label htmlFor="password" className="mb-2 block text-sm font-medium text-slate-700">
@@ -74,7 +107,7 @@ export default function AdminDetailPanel({
               <DepartmentSelect
                 value={form}
                 onChange={(dept) => setForm({ ...form, ...dept })}
-                allowCreate={type === 'Department'}
+                allowCreate={false}
               />
             </>
           )}
@@ -104,19 +137,57 @@ export default function AdminDetailPanel({
               <DepartmentSelect
                 value={form}
                 onChange={(dept) => setForm({ ...form, ...dept })}
-                allowCreate={type === 'Department'}
+                allowCreate={false}
               />
             </>
           )}
 
           {type === 'Department' && (
-            <FormField
-              label="Department Name"
-              id="dept-name"
-              value={form.name || ''}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="e.g. B.Tech Information Technology"
-            />
+            <>
+              <FormField
+                label="Department Name"
+                id="dept-name"
+                value={form.name || ''}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="e.g. Computer Science Engineering"
+              />
+              <FormField
+                label="Department Code"
+                id="dept-code"
+                value={form.code || ''}
+                onChange={(e) =>
+                  setForm({ ...form, code: e.target.value.toUpperCase() })
+                }
+                placeholder="e.g. CSE"
+              />
+              <SelectField
+                label="Degree"
+                id="degree"
+                value={form.degree || 'B.Tech'}
+                onChange={(e) => setForm({ ...form, degree: e.target.value })}
+                options={[
+                  { value: 'B.Tech', label: 'B.Tech' },
+                  { value: 'B.E', label: 'B.E' },
+                ]}
+              />
+              <FormField
+                label="Duration (years)"
+                id="duration"
+                type="number"
+                value={form.duration ?? '4'}
+                onChange={(e) => setForm({ ...form, duration: e.target.value })}
+              />
+              <SelectField
+                label="Status"
+                id="status"
+                value={form.status || 'active'}
+                onChange={(e) => setForm({ ...form, status: e.target.value })}
+                options={[
+                  { value: 'active', label: 'Active' },
+                  { value: 'inactive', label: 'Inactive' },
+                ]}
+              />
+            </>
           )}
 
           <div className="flex gap-3 pt-2">
@@ -149,6 +220,10 @@ function ViewDetails({ type, item, onEdit, onDelete }) {
       {type === 'Department' && (
         <>
           <Row label="Name" value={item.name} />
+          <Row label="Code" value={item.code} />
+          <Row label="Degree" value={item.degree} />
+          <Row label="Duration" value={`${item.duration} years`} />
+          <Row label="Status" value={item.status} />
           <Row label="HODs" value={item.hod_count} />
           <Row label="Faculty" value={item.faculty_count} />
           <Row label="Courses" value={item.course_count} />
@@ -156,9 +231,13 @@ function ViewDetails({ type, item, onEdit, onDelete }) {
       )}
       {(type === 'HOD' || type === 'Faculty') && (
         <>
+          <Row label="Employee ID" value={item.employee_id} />
           <Row label="Name" value={item.full_name} />
           <Row label="Email" value={item.email} />
+          <Row label="Mobile" value={item.mobile} />
+          <Row label="Designation" value={item.designation || item.role} />
           <Row label="Department" value={item.department} />
+          <Row label="Access" value={item.is_active === false ? 'Inactive' : 'Active'} />
         </>
       )}
       {type === 'Course' && (
@@ -170,9 +249,9 @@ function ViewDetails({ type, item, onEdit, onDelete }) {
           <Row
             label="Faculty Staff"
             value={
-              item.staff?.map((s) => s.full_name).join(', ') ||
+              item.staff?.map((s) => s.full_name || s.faculty_name).join(', ') ||
               item.staff_display ||
-              'No faculty in this department'
+              'Not assigned'
             }
           />
         </>

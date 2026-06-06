@@ -25,6 +25,13 @@ def login():
     if not user or not user.check_password(password):
         return jsonify({"message": "Invalid email or password."}), 401
 
+    if not user.is_active:
+        return jsonify({"message": "Your account is inactive. Contact the administrator."}), 403
+
+    if user.role in ("hod", "faculty") and user.department_rel:
+        if not user.department_rel.is_active:
+            return jsonify({"message": "Your department is inactive. Contact the administrator."}), 403
+
     access_token = create_access_token(
         identity=str(user.id),
         additional_claims={"role": user.role, "username": user.username},

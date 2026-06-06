@@ -1,131 +1,356 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import CourseTable from '../components/CourseTable'
-import DashboardLayout from '../components/DashboardLayout'
+import CoBarChart from '../components/faculty/CoBarChart'
+import CoDonutChart from '../components/faculty/CoDonutChart'
+import FacultyShell from '../components/faculty/FacultyShell'
 import MarkSheetSetupModal from '../components/MarkSheetSetupModal'
-import StatCard from '../components/StatCard'
 import { dashboardAPI, facultyAPI } from '../services/api'
+
+function StatCard({ icon, label, value, sub }) {
+  return (
+    <div className="rounded-2xl bg-white p-5 shadow-md">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-sm font-medium text-slate-500">{label}</p>
+          <p className="mt-1 text-3xl font-bold text-slate-900">{value}</p>
+          {sub && <p className="mt-1 text-xs text-slate-400">{sub}</p>}
+        </div>
+        <div className="rounded-xl bg-navy/5 p-3 text-navy">{icon}</div>
+      </div>
+    </div>
+  )
+}
+
+function StatusBadge({ status }) {
+  const styles = {
+    met: 'bg-emerald-100 text-emerald-800',
+    moderate: 'bg-amber-100 text-amber-800',
+    low: 'bg-red-100 text-red-800',
+    pending: 'bg-slate-100 text-slate-600',
+  }
+  const labels = {
+    met: 'Met Target',
+    moderate: 'Moderate',
+    low: 'Low',
+    pending: 'Pending',
+  }
+  return (
+    <span
+      className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${styles[status] || styles.pending}`}
+    >
+      {labels[status] || status}
+    </span>
+  )
+}
+
 
 export default function FacultyDashboard() {
   const navigate = useNavigate()
-  const [data, setData] = useState(null)
-  const [marksheets, setMarksheets] = useState([])
+  const [deptData, setDeptData] = useState(null)
+  const [analytics, setAnalytics] = useState(null)
+  const [semester, setSemester] = useState('all')
+  const [courseFilter, setCourseFilter] = useState('all')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
   const [showSetup, setShowSetup] = useState(false)
 
-  const load = () => {
-    dashboardAPI
-      .faculty()
-      .then((res) => setData(res.data))
-      .catch((err) => setError(err.response?.data?.message || 'Failed to load dashboard.'))
+  const load = useCallback(() => {
+    setLoading(true)
+    const params = semester !== 'all' ? { semester } : {}
 
-    facultyAPI
-      .listMarksheets()
-      .then((res) => setMarksheets(res.data.marksheets || []))
-      .catch(() => setMarksheets([]))
-  }
+    Promise.all([
+      dashboardAPI.faculty(),
+      facultyAPI.dashboardStats(params),
+    ])
+      .then(([deptRes, statsRes]) => {
+        setDeptData(deptRes.data)
+        setAnalytics(statsRes.data.analytics)
+        setError('')
+      })
+      .catch((err) => {
+        setError(err.response?.data?.message || 'Failed to load dashboard.')
+      })
+      .finally(() => setLoading(false))
+  }, [semester])
 
   useEffect(() => {
     load()
-  }, [])
+  }, [load])
 
-  const user = data?.user
+  const user = deptData?.user
+  const deptDetail = deptData?.department_detail
+  const assignedCourses = deptData?.assigned_courses || deptData?.courses || []
+  const stats = analytics?.stats || {}
+  const recent = analytics?.recent_courses || []
+
+  const semesterOptions = useMemo(() => {
+    const fromSheets = (analytics?.recent_courses || [])
+      .filter((c) => c.year && c.semester)
+      .map((c) => ({
+        key: `${c.year}-${c.semester}`,
+        label: `Year ${c.year} · Semester ${c.semester}`,
+      }))
+    const seen = new Set()
+    return fromSheets.filter((s) => {
+      if (seen.has(s.key)) return false
+      seen.add(s.key)
+      return true
+    })
+  }, [analytics])
+
+  const barData = useMemo(() => {
+    if (courseFilter === 'all') return analytics?.co_overview || []
+    const course = recent.find((c) => String(c.id) === courseFilter)
+    return course?.co_breakdown?.length ? course.co_breakdown : analytics?.co_overview || []
+  }, [analytics, courseFilter, recent])
 
   const handleCreateSheet = async (formData) => {
-    try {
-      const res = await facultyAPI.createMarksheet(formData)
-      setShowSetup(false)
-      navigate(`/faculty/marksheet/${res.data.marksheet.id}`)
-    } catch (err) {
-      setError(err.response?.data?.message || 'Could not create mark sheet.')
-      throw err
-    }
+    const res = await facultyAPI.createMarksheet(formData)
+    setShowSetup(false)
+    navigate(`/faculty/marksheet/${res.data.marksheet.id}`)
   }
 
+  const avgDisplay =
+    stats.avg_co_attainment != null ? `${stats.avg_co_attainment}%` : '—'
+  const metDisplay =
+    stats.courses_total_with_data > 0
+      ? `${stats.courses_met_target}/${stats.courses_total_with_data}`
+      : '0/0'
+
   return (
-    <DashboardLayout title="Faculty Dashboard" subtitle="Teaching & mark entry">
+    <FacultyShell
+      semester={semester}
+      onSemesterChange={setSemester}
+      semesters={semesterOptions}
+    >
       {error && (
         <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
           {error}
         </div>
       )}
 
-      <div className="mb-6 rounded-2xl bg-white p-6 shadow-md">
-        <h2 className="text-lg font-semibold text-slate-800">{data?.message || 'Loading...'}</h2>
-        {user && (
-          <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
-            <p>
-              <span className="font-medium text-slate-700">Email:</span> {user.email}
-            </p>
-            <p>
-              <span className="font-medium text-slate-700">Department:</span> {user.department}
-            </p>
-          </div>
-        )}
-      </div>
-
-      <section className="mb-8 rounded-2xl bg-white p-6 shadow-md">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-800">Student Mark Entry</h2>
-            <p className="text-sm text-slate-500">
-              Open an Excel-style sheet to enter student names, marks (Q1, Q2…), and CO per
-              question.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowSetup(true)}
-            className="rounded-full bg-navy px-6 py-3 text-sm font-semibold text-white hover:bg-navy-dark"
-          >
-            + New Mark Sheet
-          </button>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+          <p className="mt-1 text-slate-600">
+            Welcome back, {user?.full_name || 'Faculty'}! 👋
+          </p>
+          <label className="mt-3 flex items-center gap-2 text-xs font-medium text-slate-500 sm:hidden">
+            Semester
+            <select
+              value={semester}
+              onChange={(e) => setSemester(e.target.value)}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-sm"
+            >
+              <option value="all">All</option>
+              {semesterOptions.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
+        <button
+          type="button"
+          onClick={() => setShowSetup(true)}
+          className="rounded-full bg-navy px-5 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-navy-dark"
+        >
+          + New Mark Sheet
+        </button>
+      </div>
 
-        {marksheets.length === 0 ? (
-          <p className="text-sm text-slate-500">No mark sheets yet. Click &quot;New Mark Sheet&quot; to start.</p>
+      {deptDetail && (
+        <div className="mb-6 rounded-2xl bg-white p-5 shadow-md">
+          <h2 className="text-base font-semibold text-slate-800">My Department</h2>
+          <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <p>
+              <span className="text-slate-500">Department:</span>{' '}
+              <strong>{deptDetail.name}</strong>
+            </p>
+            <p>
+              <span className="text-slate-500">Code:</span> {deptDetail.code || '—'}
+            </p>
+            <p>
+              <span className="text-slate-500">Degree:</span> {deptDetail.degree}
+            </p>
+            <p>
+              <span className="text-slate-500">Duration:</span> {deptDetail.duration} years
+            </p>
+          </div>
+        </div>
+      )}
+
+      <section className="mb-6 rounded-2xl bg-white p-5 shadow-md">
+        <h2 className="mb-3 text-base font-semibold text-slate-800">My Assigned Courses</h2>
+        {assignedCourses.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            No courses assigned yet. Your HOD will assign courses for your department and year.
+          </p>
         ) : (
-          <ul className="space-y-2">
-            {marksheets.map((sheet) => (
-              <li key={sheet.id}>
-                <button
-                  type="button"
-                  onClick={() => navigate(`/faculty/marksheet/${sheet.id}`)}
-                  className="flex w-full items-center justify-between rounded-lg border border-slate-100 px-4 py-3 text-left hover:border-navy/30 hover:bg-slate-50"
-                >
-                  <span>
-                    <span className="font-medium text-navy">{sheet.course_code}</span>
-                    <span className="text-slate-700"> — {sheet.course_name}</span>
-                    <span className="mt-1 block text-xs text-slate-400">
-                      {sheet.regulation} · {sheet.department} · {sheet.num_students} students ·{' '}
-                      {sheet.num_questions} questions
-                    </span>
-                  </span>
-                  <span className="text-sm text-navy">Open →</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500">
+                  <th className="pb-2 pr-4">Code</th>
+                  <th className="pb-2 pr-4">Course</th>
+                  <th className="pb-2 pr-4">Year</th>
+                  <th className="pb-2 pr-4">Regulation</th>
+                  <th className="pb-2">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {assignedCourses.map((c) => (
+                  <tr key={c.assignment_id || c.id} className="border-b border-slate-50">
+                    <td className="py-2 pr-4 font-medium text-navy">{c.course_code}</td>
+                    <td className="py-2 pr-4">{c.name}</td>
+                    <td className="py-2 pr-4">Year {c.year || '—'}</td>
+                    <td className="py-2 pr-4">{c.regulation}</td>
+                    <td className="py-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowSetup(true)}
+                        className="text-xs font-medium text-navy hover:underline"
+                      >
+                        Create Mark Sheet
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
-      <div className="mb-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        <StatCard label="Department Courses" value={data?.stats?.courses_count ?? '—'} />
-        <StatCard label="Mark Sheets" value={marksheets.length} accent="bg-emerald-600" />
-      </div>
+      {loading ? (
+        <p className="text-center text-slate-500">Loading dashboard…</p>
+      ) : (
+        <>
+          <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              label="Courses"
+              value={stats.courses_count ?? 0}
+              sub="Saved mark sheets"
+              icon={
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+              }
+            />
+            <StatCard
+              label="Students"
+              value={stats.students_count ?? 0}
+              sub="Across saved sheets"
+              icon={
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              }
+            />
+            <StatCard
+              label="Avg CO Attainment"
+              value={avgDisplay}
+              sub="All courses (saved)"
+              icon={
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              }
+            />
+            <StatCard
+              label="Attainment ≥ 70%"
+              value={metDisplay}
+              sub="Courses met target"
+              icon={
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                </svg>
+              }
+            />
+          </div>
 
-      <section className="rounded-2xl bg-white p-6 shadow-md">
-        <h2 className="mb-4 text-lg font-semibold text-slate-800">Courses in Your Department</h2>
-        <CourseTable courses={data?.courses} showStaff={false} />
-      </section>
+          <div className="mb-6 grid gap-6 lg:grid-cols-2">
+            <CoBarChart
+              data={barData}
+              courseFilter={courseFilter}
+              onCourseFilterChange={setCourseFilter}
+              courses={recent}
+            />
+            <CoDonutChart distribution={analytics?.distribution} />
+          </div>
+
+          <section id="recent-results" className="mb-6 rounded-2xl bg-white p-5 shadow-md sm:p-6">
+              <h3 className="mb-4 text-base font-semibold text-slate-800">
+                Recent CO Attainment Results
+              </h3>
+              {recent.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  No saved mark sheets yet. Create a sheet, enter marks, save, then results appear
+                  here.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-xs font-semibold uppercase text-slate-500">
+                        <th className="pb-3 pr-4">Course Code</th>
+                        <th className="pb-3 pr-4">Course Name</th>
+                        <th className="pb-3 pr-4">COs</th>
+                        <th className="pb-3 pr-4">Avg Attainment</th>
+                        <th className="pb-3 pr-4">Status</th>
+                        <th className="pb-3">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recent.slice(0, 8).map((row) => (
+                        <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/80">
+                          <td className="py-3 pr-4 font-medium text-navy">{row.course_code}</td>
+                          <td className="py-3 pr-4 text-slate-700">{row.course_name}</td>
+                          <td className="py-3 pr-4">{row.co_count}</td>
+                          <td className="py-3 pr-4 font-medium">
+                            {row.avg_attainment != null ? `${row.avg_attainment}%` : '—'}
+                          </td>
+                          <td className="py-3 pr-4">
+                            <StatusBadge status={row.status} />
+                          </td>
+                          <td className="py-3">
+                            <div className="flex flex-wrap gap-3">
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/faculty/marksheet/${row.id}`)}
+                                className="text-sm font-medium text-navy hover:underline"
+                              >
+                                Open Sheet
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  navigate(`/faculty/marksheet/${row.id}/co-attainment`)
+                                }
+                                className="text-sm font-medium text-slate-600 hover:underline"
+                              >
+                                CO Report
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+          </section>
+        </>
+      )}
 
       <MarkSheetSetupModal
         open={showSetup}
         onClose={() => setShowSetup(false)}
         onSubmit={handleCreateSheet}
         defaultDepartment={user?.department}
-        courses={data?.courses || []}
+        courses={assignedCourses.length ? assignedCourses : deptData?.courses || []}
       />
-    </DashboardLayout>
+    </FacultyShell>
   )
 }

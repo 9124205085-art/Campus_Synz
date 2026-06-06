@@ -11,8 +11,23 @@ def normalize_department_name(name: str) -> str:
 
 
 def department_match_key(name: str) -> str:
-    """Key for matching similar department names (case/spacing insensitive)."""
-    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+    """Key for matching similar department names (case/spacing/degree/suffix insensitive)."""
+    raw_key = re.sub(r"[^a-z0-9]", "", (name or "").lower())
+    
+    # Check manual synonyms / mappings to group variations of same departments
+    mappings = {
+        "cse": "computerscience",
+        "becse": "computerscience",
+        "computerscienceengineering": "computerscience",
+        "computerscience": "computerscience",
+        "btechartificialintelligence": "artificialintelligence",
+        "artificialintelligenceanddatascience": "artificialintelligence",
+        "artificialintelligence": "artificialintelligence",
+        "aids": "artificialintelligence",
+        "btechinformationtechnology": "informationtechnology",
+        "informationtechnology": "informationtechnology",
+    }
+    return mappings.get(raw_key, raw_key)
 
 
 def get_or_create_department(name: str) -> Department:
@@ -34,6 +49,7 @@ def get_or_create_department(name: str) -> Department:
 
 def merge_duplicate_departments():
     """Merge departments that differ only by spelling/spacing."""
+    from utils.marksheet_constants import DEPARTMENTS
     groups = {}
     for dept in Department.query.all():
         key = department_match_key(dept.name)
@@ -44,7 +60,20 @@ def merge_duplicate_departments():
         if len(group) < 2:
             continue
 
-        group.sort(key=lambda d: d.id)
+        # Sort: prefer names in DEPARTMENTS constant list first, then sort by ID
+        def sort_key(d):
+            try:
+                idx = DEPARTMENTS.index(d.name)
+            except ValueError:
+                # Try matching by case-insensitive key
+                idx = 9999
+                for i, name in enumerate(DEPARTMENTS):
+                    if name.lower() == d.name.lower():
+                        idx = i
+                        break
+            return (idx, d.id)
+
+        group.sort(key=sort_key)
         primary = group[0]
 
         for duplicate in group[1:]:
@@ -52,7 +81,11 @@ def merge_duplicate_departments():
                 {"department_id": primary.id}, synchronize_session=False
             )
             Course.query.filter_by(department_id=duplicate.id).update(
-                {"department_id": primary.id}, synchronize_session=False
+                {"department_id": primary.id, "department_label": primary.name}, synchronize_session=False
+            )
+            from models import MarkSheet
+            MarkSheet.query.filter_by(department_id=duplicate.id).update(
+                {"department_id": primary.id, "department_label": primary.name}, synchronize_session=False
             )
             db.session.delete(duplicate)
             merged += 1

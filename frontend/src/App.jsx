@@ -6,6 +6,7 @@ import AdminDashboard from './pages/AdminDashboard'
 import HODDashboard from './pages/HODDashboard'
 import FacultyDashboard from './pages/FacultyDashboard'
 import FacultyMarkSheetPage from './pages/FacultyMarkSheetPage'
+import COAttainmentPage from './pages/COAttainmentPage'
 
 function RootRedirect() {
   const { user, loading } = useAuth()
@@ -64,6 +65,16 @@ export default function App() {
         element={
           <ProtectedRoute allowedRoles={['faculty']}>
             <FacultyMarkSheetPage />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* ── CO Attainment Report ── */}
+      <Route
+        path="/faculty/marksheet/:sheetId/co-attainment"
+        element={
+          <ProtectedRoute allowedRoles={['faculty']}>
+            <COAttainmentPage />
           </ProtectedRoute>
         }
       />

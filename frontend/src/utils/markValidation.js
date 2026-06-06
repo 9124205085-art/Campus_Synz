@@ -1,4 +1,8 @@
-/** Validate mark entry: empty, 0, or whole number 1..maxMark (inclusive). */
+/**
+ * Validate mark entry.
+ * Allowed: empty, 0, or any number from 0 to maxMark (inclusive).
+ * Decimals are allowed (e.g. 1.5, 0.5).
+ */
 
 export function maxMarkForQuestion(questionMarks, qIndex) {
   const m = parseFloat(questionMarks?.[qIndex])
@@ -10,8 +14,10 @@ export function validateMarkInput(raw, maxMark) {
     return { value: '', error: null }
   }
   const trimmed = String(raw).trim()
+  if (trimmed === '') return { value: '', error: null }
+
   const num = Number(trimmed)
-  if (trimmed === '' || Number.isNaN(num)) {
+  if (Number.isNaN(num)) {
     return { value: trimmed, error: `Enter a number from 0 to ${maxMark}.` }
   }
   if (num < 0 || num > maxMark) {

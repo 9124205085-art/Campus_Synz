@@ -71,6 +71,39 @@ def default_question_marks(num_questions: int) -> list[str]:
     return ["2" for _ in range(num_questions)]
 
 
+def flatten_question_marks(raw, num_questions: int, components: list[str] | None = None) -> list[str]:
+    """Normalise stored config to a flat list (handles legacy per-component dicts)."""
+    if isinstance(raw, list) and len(raw) == num_questions:
+        return [str(m) for m in raw]
+    if isinstance(raw, dict) and raw:
+        key = None
+        if components:
+            for cid in components:
+                if cid in raw:
+                    key = cid
+                    break
+        arr = raw.get(key) if key else next(iter(raw.values()))
+        if isinstance(arr, list) and len(arr) == num_questions:
+            return [str(m) for m in arr]
+    return default_question_marks(num_questions)
+
+
+def flatten_question_cos(raw, num_questions: int, components: list[str] | None = None) -> list[str]:
+    if isinstance(raw, list) and len(raw) == num_questions:
+        return [str(c) for c in raw]
+    if isinstance(raw, dict) and raw:
+        key = None
+        if components:
+            for cid in components:
+                if cid in raw:
+                    key = cid
+                    break
+        arr = raw.get(key) if key else next(iter(raw.values()))
+        if isinstance(arr, list) and len(arr) == num_questions:
+            return [str(c) for c in arr]
+    return default_question_cos(num_questions)
+
+
 def validate_assessments(components: list) -> tuple[list[str] | None, str | None]:
     if not components or not isinstance(components, list):
         return None, "Select at least one mark sheet component."

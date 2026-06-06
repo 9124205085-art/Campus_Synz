@@ -41,7 +41,20 @@ export const dashboardAPI = {
   faculty: () => api.get('/dashboard/faculty'),
 }
 
+export const hodAPI = {
+  dashboard: () => api.get('/hod/dashboard'),
+  listFaculty: () => api.get('/hod/faculty'),
+  addFaculty: (data) => api.post('/hod/faculty', data),
+  addCourse: (data) => api.post('/hod/courses', data),
+  updateFacultyAccess: (id, isActive) =>
+    api.patch(`/hod/faculty/${id}/access`, { is_active: isActive }),
+  deleteAssignment: (id) => api.delete(`/hod/assignments/${id}`),
+  listCoSubmissions: () => api.get('/hod/co-submissions'),
+  getCoSubmission: (id) => api.get(`/hod/co-submissions/${id}`),
+}
+
 export const facultyAPI = {
+  dashboardStats: (params) => api.get('/faculty/dashboard-stats', { params }),
   marksheetConfig: () => api.get('/faculty/marksheet-config'),
   previewStudents: (params) => api.get('/faculty/students', { params }),
   listMarksheets: () => api.get('/faculty/marksheets'),
@@ -49,6 +62,7 @@ export const facultyAPI = {
   createMarksheet: (data) => api.post('/faculty/marksheets', data),
   updateMarksheet: (id, data) => api.put(`/faculty/marksheets/${id}`, data),
   deleteMarksheet: (id) => api.delete(`/faculty/marksheets/${id}`),
+  submitCoAttainment: (id, data) => api.post(`/faculty/marksheets/${id}/submit-co-attainment`, data),
 }
 
 export const adminAPI = {
