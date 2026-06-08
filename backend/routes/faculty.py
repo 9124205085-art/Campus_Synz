@@ -17,6 +17,7 @@ from utils.marksheet_service import (
     marksheet_config_payload,
     query_students,
     validate_assessments,
+    validate_co_po_mapping,
     validate_question_config,
     validate_student_rows_for_save,
 )
@@ -192,6 +193,12 @@ def create_marksheet():
     if q_err:
         errors.append(q_err)
 
+    co_po_mapping, map_err = validate_co_po_mapping(
+        data.get("co_po_mapping"), question_cos or []
+    )
+    if map_err:
+        errors.append(map_err)
+
     if student_source == "database":
         pass
     elif student_source == "manual":
@@ -247,6 +254,7 @@ def create_marksheet():
         assessment_components=assessment_ids,
         question_cos=question_cos,
         question_marks=question_marks,
+        co_po_mapping=co_po_mapping,
         student_rows=student_rows,
         is_saved=False,
     )

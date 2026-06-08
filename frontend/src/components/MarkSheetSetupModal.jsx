@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import CoPoMappingGrid from './CoPoMappingGrid'
 import FormField from './FormField'
 import SelectField from './SelectField'
 import { facultyAPI } from '../services/api'
+import { buildDefaultCoPoMapping } from '../utils/coPoAttainment'
 
 const emptyQuestionConfig = (n) =>
   Array.from({ length: n }, () => ({ co: 'CO1', marks: '2' }))
@@ -24,8 +26,14 @@ export default function MarkSheetSetupModal({ open, onClose, onSubmit, defaultDe
     assessment_components: [],
   })
   const [questions, setQuestions] = useState(emptyQuestionConfig(5))
+  const [coPoMapping, setCoPoMapping] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  const usedCos = useMemo(
+    () => [...new Set(questions.map((q) => q.co))].sort(),
+    [questions],
+  )
 
   useEffect(() => {
     if (!open) return
@@ -48,6 +56,27 @@ export default function MarkSheetSetupModal({ open, onClose, onSubmit, defaultDe
       return next
     })
   }, [numQ, open])
+
+  useEffect(() => {
+    if (!open || !usedCos.length) return
+    setCoPoMapping((prev) => {
+      const next = { ...prev }
+      let changed = false
+      for (const co of usedCos) {
+        if (!next[co]) {
+          next[co] = buildDefaultCoPoMapping([co])[co]
+          changed = true
+        }
+      }
+      for (const co of Object.keys(next)) {
+        if (!usedCos.includes(co)) {
+          delete next[co]
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [usedCos, open])
 
   useEffect(() => {
     if (!open || !config || form.student_source !== 'database') {
@@ -144,6 +173,7 @@ export default function MarkSheetSetupModal({ open, onClose, onSubmit, defaultDe
         assessment_components: form.assessment_components,
         question_cos: questions.map((q) => q.co),
         question_marks: questions.map((q) => q.marks),
+        co_po_mapping: coPoMapping,
       })
     } catch (err) {
       setError(err.response?.data?.message || 'Could not create mark sheet.')
@@ -157,7 +187,7 @@ export default function MarkSheetSetupModal({ open, onClose, onSubmit, defaultDe
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+      <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
         <h2 className="text-xl font-bold text-slate-800">Create Mark Entry Sheet</h2>
         <p className="mt-1 text-sm text-slate-500">
           Set question COs and max marks first. Then open the sheet and type student names manually,
@@ -394,6 +424,22 @@ export default function MarkSheetSetupModal({ open, onClose, onSubmit, defaultDe
                 </table>
               </div>
             )}
+          </section>
+
+          <section>
+            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-violet-800">
+              CO–PO Mapping
+            </h3>
+            <CoPoMappingGrid
+              usedCos={usedCos}
+              mapping={coPoMapping}
+              onChange={(co, po, val) => {
+                setCoPoMapping((prev) => ({
+                  ...prev,
+                  [co]: { ...(prev[co] || {}), [po]: val },
+                }))
+              }}
+            />
           </section>
 
           <div className="flex gap-3 pt-2">

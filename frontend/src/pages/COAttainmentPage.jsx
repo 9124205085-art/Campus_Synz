@@ -1,8 +1,14 @@
 import { Fragment, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import * as XLSX from 'xlsx'
+import CoPoMappingGrid from '../components/CoPoMappingGrid'
 import DashboardLayout from '../components/DashboardLayout'
 import { facultyAPI } from '../services/api'
+import {
+  PO_OPTIONS,
+  buildDefaultCoPoMapping,
+  enrichResultWithPO,
+  exportConsolidatedAttainmentExcel,
+} from '../utils/coPoAttainment'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -223,120 +229,6 @@ function calculateAttainment(marksheet, threshold, weightages) {
   }
 }
 
-// ─── Excel export ────────────────────────────────────────────────────────────
-
-function exportToExcel(marksheet, threshold, weightages, result) {
-  const wb = XLSX.utils.book_new()
-  const { usedCOs, componentResults, finalCO } = result
-
-  const assessmentLabel = (aid) => {
-    const idx = marksheet.assessment_components.indexOf(aid)
-    return marksheet.assessment_labels?.[idx] || aid
-  }
-
-  // ── Sheet 1: Student Marks ────────────────────────────────────────────────
-  const marksHeader = ['Reg. No', 'Student Name']
-  for (const aid of marksheet.assessment_components) {
-    for (let q = 0; q < marksheet.num_questions; q++) {
-      marksHeader.push(
-        `${assessmentLabel(aid)} Q${q + 1} (${marksheet.question_cos[q]}, max ${marksheet.question_marks[q]})`
-      )
-    }
-  }
-  const marksRows = [marksHeader]
-  for (const row of marksheet.student_rows) {
-    const r = [row.register_number || '', row.student_name || '']
-    for (const aid of marksheet.assessment_components) {
-      const marks = row.assessment_marks?.[aid] || []
-      for (const m of marks) r.push(m === '' ? '' : Number(m))
-    }
-    marksRows.push(r)
-  }
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(marksRows), 'Student Marks')
-
-  // ── Sheet 2: CO Attainment per Component ─────────────────────────────────
-  const compHeader = [
-    'Component', 'Weight (%)',
-    ...usedCOs.map((c) => `${c} Attained`),
-    ...usedCOs.map((c) => `${c} Total`),
-    ...usedCOs.map((c) => `${c} %`),
-    ...usedCOs.map((c) => `${c} Level (0-3)`),
-  ]
-  const compRows = [compHeader]
-  for (const aid of marksheet.assessment_components) {
-    const w = parseFloat(weightages[aid]) || 0
-    const r = [assessmentLabel(aid), w]
-    for (const co of usedCOs) r.push(componentResults[aid]?.[co]?.attained ?? '-')
-    for (const co of usedCOs) r.push(componentResults[aid]?.[co]?.total ?? '-')
-    for (const co of usedCOs) r.push(componentResults[aid]?.[co]?.pct != null ? `${componentResults[aid][co].pct}%` : '-')
-    for (const co of usedCOs) r.push(componentResults[aid]?.[co]?.level ?? '-')
-    compRows.push(r)
-  }
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(compRows), 'CO Attainment per Component')
-
-  // ── Sheet 3: Final CO Attainment ─────────────────────────────────────────
-  const finalRows = [
-    ['Course Code', marksheet.course_code],
-    ['Course Name', marksheet.course_name],
-    ['Department', marksheet.department],
-    ['Regulation', marksheet.regulation],
-    ['Passing Threshold', `${threshold}%`],
-    ['Year / Semester', `Year ${marksheet.year} / Sem ${marksheet.semester}`],
-    [],
-    ['CO', 'Weighted Level', 'Final Level (Rounded)'],
-    ...usedCOs.map((co) => [co, finalCO[co].weightedLevel, finalCO[co].roundedLevel]),
-  ]
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(finalRows), 'Final CO Attainment')
-
-  // ── Sheet 4: Student CO Attainment ───────────────────────────────────────
-  const studentHeader = [
-    'Reg. No',
-    'Student Name',
-    ...Array.from({ length: result.numQuestions || 0 }, (_, i) =>
-      `Q${i + 1} (${result.questionCos?.[i] || 'CO1'}, max ${result.questionMaxMarks?.[i] || '?'})`,
-    ),
-    ...usedCOs.flatMap((co) => [`${co} Marks`, `${co} Max`, `${co} %`, `${co} Status`]),
-    'Overall Avg %',
-    'COs Attained',
-    'Overall Attainment %',
-  ]
-  const studentRows = [studentHeader]
-  for (const s of result.studentResults || []) {
-    const r = [s.register_number, s.student_name]
-    for (let i = 0; i < (result.numQuestions || 0); i++) {
-      r.push(s.questionMarks?.[i] ?? '')
-    }
-    for (const co of usedCOs) {
-      const d = s.cos[co]
-      r.push(
-        d?.marksObtained ?? '',
-        d?.maxMark ?? '',
-        d?.pct != null ? `${d.pct}%` : '',
-        d?.attained == null ? '' : d.attained ? 'Attained' : 'Not Attained',
-      )
-    }
-    r.push(
-      s.overallPct != null ? `${s.overallPct}%` : '',
-      s.evaluatedCount > 0 ? `${s.attainedCount}/${s.evaluatedCount}` : '',
-      s.overallAttainmentPct != null ? `${s.overallAttainmentPct}%` : '',
-    )
-    studentRows.push(r)
-  }
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(studentRows), 'Student CO Attainment')
-
-  // ── Sheet 5: Level Legend ─────────────────────────────────────────────────
-  const legendRows = [
-    ['% of Students who Attained', 'Attainment Level'],
-    ['75% and above', 3],
-    ['60% – 74%', 2],
-    ['40% – 59%', 1],
-    ['Below 40%', 0],
-  ]
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(legendRows), 'Level Legend')
-
-  XLSX.writeFile(wb, `CO_Attainment_${marksheet.course_code}_${marksheet.regulation}.xlsx`)
-}
-
 // ─── Page component ───────────────────────────────────────────────────────────
 
 export default function COAttainmentPage() {
@@ -349,6 +241,7 @@ export default function COAttainmentPage() {
   const [threshold, setThreshold] = useState(60)
   const [weightages, setWeightages] = useState({})
   const [result, setResult] = useState(null)
+  const [coPoMapping, setCoPoMapping] = useState({})
   const [weightError, setWeightError] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -361,6 +254,14 @@ export default function COAttainmentPage() {
         const ms = res.data.marksheet
         setMarksheet(ms)
         setSubmitted(!!ms.co_submitted)
+        const numQ = ms.num_questions || 0
+        const qCos = normaliseQuestionCos(ms.question_cos, numQ)
+        const used = [...new Set(qCos)].sort()
+        const mapping =
+          ms.co_po_mapping && Object.keys(ms.co_po_mapping).length
+            ? ms.co_po_mapping
+            : buildDefaultCoPoMapping(used)
+        setCoPoMapping(mapping)
         if (ms.passing_threshold) setThreshold(ms.passing_threshold)
         const components = ms.assessment_components || []
         const savedWeights = ms.component_weightages || {}
@@ -399,7 +300,7 @@ export default function COAttainmentPage() {
       setWeightError('No student marks found. Enter marks in the sheet, save, then calculate again.')
       return
     }
-    setResult(r)
+    setResult(enrichResultWithPO(r, coPoMapping))
   }
 
   const handleSubmit = async () => {
@@ -415,6 +316,8 @@ export default function COAttainmentPage() {
         questionCos: result.questionCos,
         questionMaxMarks: result.questionMaxMarks,
         numQuestions: result.numQuestions,
+        coPoMapping: result.coPoMapping,
+        classAverages: result.classAverages,
       }
       const res = await facultyAPI.submitCoAttainment(sheetId, {
         threshold,
@@ -630,13 +533,22 @@ export default function COAttainmentPage() {
                 </div>
               </div>
 
-              {/* ── Step 3: Per-Student CO Attainment (Excel-style) ── */}
+              <div className="mb-6 rounded-2xl bg-white p-6 shadow-md">
+                <h3 className="mb-3 text-base font-semibold text-slate-800">CO–PO Mapping Used</h3>
+                <CoPoMappingGrid
+                  usedCos={result.usedCOs}
+                  mapping={coPoMapping}
+                  readOnly
+                />
+              </div>
+
+              {/* ── Step 3: Per-Student CO + PO Attainment (Excel-style) ── */}
               <div className="mb-6 rounded-2xl bg-white p-6 shadow-md">
                 <h3 className="mb-1 text-base font-semibold text-slate-800">
-                  Step 3 — Student-wise CO Attainment
+                  Step 3 — Student Performance & Outcome Attainment
                 </h3>
                 <p className="mb-4 text-xs text-slate-400">
-                  Question marks (Q1, Q2…) with CO mapping · CO totals and attainment at ≥ {threshold}%
+                  Question marks · CO attainment · PO attainment (from CO–PO mapping) · Overall PO level
                 </p>
 
                 <div className="overflow-x-auto rounded-lg border border-slate-300">
@@ -667,18 +579,30 @@ export default function COAttainmentPage() {
                             </span>
                           </th>
                         ))}
+                        <th rowSpan={2} className="border border-slate-300 bg-amber-50 px-2 py-2 text-center font-semibold text-amber-900">
+                          Total Obtained
+                        </th>
+                        <th rowSpan={2} className="border border-slate-300 bg-amber-50 px-2 py-2 text-center font-semibold text-amber-900">
+                          Total Max
+                        </th>
                         {result.usedCOs.map((co) => (
                           <th
                             key={co}
-                            colSpan={3}
-                            className="border border-slate-300 bg-slate-50 px-2 py-2 text-center font-semibold text-slate-700"
+                            colSpan={2}
+                            className="border border-slate-300 bg-emerald-50 px-2 py-2 text-center font-semibold text-emerald-800"
                           >
                             {co}
                           </th>
                         ))}
                         <th
-                          colSpan={3}
-                          className="border border-slate-300 bg-navy/10 px-2 py-2 text-center font-semibold text-navy"
+                          colSpan={PO_OPTIONS.length}
+                          className="border border-slate-300 bg-orange-50 px-2 py-2 text-center font-semibold text-orange-800"
+                        >
+                          PO Attainment %
+                        </th>
+                        <th
+                          colSpan={2}
+                          className="border border-slate-300 bg-violet-100 px-2 py-2 text-center font-semibold text-violet-900"
                         >
                           Overall
                         </th>
@@ -688,12 +612,15 @@ export default function COAttainmentPage() {
                           <Fragment key={`${co}-sub`}>
                             <th className="border border-slate-300 px-1 py-1 text-center font-medium">Marks</th>
                             <th className="border border-slate-300 px-1 py-1 text-center font-medium">%</th>
-                            <th className="border border-slate-300 px-1 py-1 text-center font-medium">Status</th>
                           </Fragment>
                         ))}
-                        <th className="border border-slate-300 bg-navy/5 px-1 py-1 text-center font-medium">Avg %</th>
-                        <th className="border border-slate-300 bg-navy/5 px-1 py-1 text-center font-medium">COs</th>
-                        <th className="border border-slate-300 bg-navy/5 px-1 py-1 text-center font-medium">Att %</th>
+                        {PO_OPTIONS.map((po) => (
+                          <th key={po} className="border border-slate-300 bg-orange-50/50 px-1 py-1 text-center font-medium">
+                            {po}
+                          </th>
+                        ))}
+                        <th className="border border-slate-300 bg-violet-50 px-1 py-1 text-center font-medium">PO %</th>
+                        <th className="border border-slate-300 bg-violet-50 px-1 py-1 text-center font-medium">Level</th>
                       </tr>
                       <tr className="bg-white text-xs text-slate-500">
                         <th colSpan={2} className="sticky left-0 z-20 border border-slate-300 bg-slate-50 px-2 py-1 text-left">
@@ -705,10 +632,11 @@ export default function COAttainmentPage() {
                             <div>{result.questionMaxMarks?.[i] || '?'}m</div>
                           </th>
                         ))}
+                        <th colSpan={2} className="border border-slate-200 bg-amber-50/50" />
                         {result.usedCOs.map((co) => (
-                          <th key={`${co}-pad`} colSpan={3} className="border border-slate-200" />
+                          <th key={`${co}-pad`} colSpan={2} className="border border-slate-200" />
                         ))}
-                        <th colSpan={3} className="border border-slate-200 bg-navy/[0.03]" />
+                        <th colSpan={PO_OPTIONS.length + 2} className="border border-slate-200 bg-violet/[0.03]" />
                       </tr>
                     </thead>
                     <tbody>
@@ -725,12 +653,29 @@ export default function COAttainmentPage() {
                               {student.questionMarks?.[qi] != null ? student.questionMarks[qi] : '—'}
                             </td>
                           ))}
+                          {(() => {
+                            const qMarks = student.questionMarks || []
+                            const totalObtained = qMarks.reduce((s, m) => s + (parseFloat(m) || 0), 0)
+                            const totalMax = (result.questionMaxMarks || []).reduce(
+                              (s, m) => s + (parseFloat(m) || 0),
+                              0,
+                            )
+                            return (
+                              <>
+                                <td className="border border-slate-200 bg-amber-50/30 px-1 py-1.5 text-center font-medium tabular-nums">
+                                  {totalObtained}
+                                </td>
+                                <td className="border border-slate-200 bg-amber-50/30 px-1 py-1.5 text-center tabular-nums">
+                                  {totalMax}
+                                </td>
+                              </>
+                            )
+                          })()}
                           {result.usedCOs.map((co) => {
                             const d = student.cos[co]
                             if (!d || d.marksObtained == null) {
                               return (
                                 <Fragment key={co}>
-                                  <td className="border border-slate-200 px-1 py-1.5 text-center text-slate-300">—</td>
                                   <td className="border border-slate-200 px-1 py-1.5 text-center text-slate-300">—</td>
                                   <td className="border border-slate-200 px-1 py-1.5 text-center text-slate-300">—</td>
                                 </Fragment>
@@ -743,27 +688,78 @@ export default function COAttainmentPage() {
                                   <span className="text-slate-400">/{d.maxMark}</span>
                                 </td>
                                 <td className="border border-slate-200 px-1 py-1.5 text-center tabular-nums">{d.pct}%</td>
-                                <td className="border border-slate-200 px-1 py-1.5 text-center">
-                                  <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                                    d.attained ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                                  }`}>
-                                    {d.attained ? 'Attained' : 'Not Attained'}
-                                  </span>
-                                </td>
                               </Fragment>
                             )
                           })}
-                          <td className="border border-slate-200 bg-navy/[0.02] px-1 py-1.5 text-center font-semibold tabular-nums text-navy">
-                            {student.overallPct != null ? `${student.overallPct}%` : '—'}
+                          {PO_OPTIONS.map((po) => (
+                            <td key={po} className="border border-slate-200 bg-orange-50/20 px-1 py-1.5 text-center tabular-nums">
+                              {student.pos?.[po] != null ? `${student.pos[po]}%` : '—'}
+                            </td>
+                          ))}
+                          <td className="border border-slate-200 bg-violet-50 px-1 py-1.5 text-center font-semibold tabular-nums text-violet-900">
+                            {student.overallPoPct != null ? `${student.overallPoPct}%` : '—'}
                           </td>
-                          <td className="border border-slate-200 bg-navy/[0.02] px-1 py-1.5 text-center tabular-nums">
-                            {student.evaluatedCount > 0 ? `${student.attainedCount}/${student.evaluatedCount}` : '—'}
-                          </td>
-                          <td className="border border-slate-200 bg-navy/[0.02] px-1 py-1.5 text-center tabular-nums">
-                            {student.overallAttainmentPct != null ? `${student.overallAttainmentPct}%` : '—'}
+                          <td className="border border-slate-200 bg-violet-50 px-1 py-1.5 text-center">
+                            <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                              student.poLevel === 'High'
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : student.poLevel === 'Low'
+                                  ? 'bg-red-100 text-red-700'
+                                  : 'bg-slate-100 text-slate-500'
+                            }`}>
+                              {student.poLevel || '—'}
+                            </span>
                           </td>
                         </tr>
                       ))}
+                      {result.classAverages && (
+                        <tr className="bg-slate-100 font-semibold">
+                          <td colSpan={2} className="sticky left-0 z-10 border border-slate-300 bg-slate-200 px-2 py-2">
+                            CLASS AVERAGE (%)
+                          </td>
+                          {(result.classAverages.questionAvgs || []).map((v, i) => (
+                            <td key={i} className="border border-slate-300 px-1 py-2 text-center tabular-nums">
+                              {v != null ? v : '—'}
+                            </td>
+                          ))}
+                          <td className="border border-slate-300 bg-amber-50 px-1 py-2 text-center tabular-nums">
+                            {result.classAverages.totalObtained ?? '—'}
+                          </td>
+                          <td className="border border-slate-300 bg-amber-50 px-1 py-2 text-center tabular-nums">
+                            {(result.questionMaxMarks || []).reduce(
+                              (s, m) => s + (parseFloat(m) || 0),
+                              0,
+                            )}
+                          </td>
+                          {result.usedCOs.map((co) => (
+                            <Fragment key={`avg-${co}`}>
+                              <td className="border border-slate-300 px-1 py-2 text-center tabular-nums">
+                                {result.classAverages.coMarksAvgs?.[co] ?? '—'}
+                              </td>
+                              <td className="border border-slate-300 px-1 py-2 text-center tabular-nums">
+                                {result.classAverages.coPctAvgs?.[co] != null
+                                  ? `${result.classAverages.coPctAvgs[co]}%`
+                                  : '—'}
+                              </td>
+                            </Fragment>
+                          ))}
+                          {PO_OPTIONS.map((po) => (
+                            <td key={`avg-${po}`} className="border border-slate-300 bg-orange-50 px-1 py-2 text-center tabular-nums">
+                              {result.classAverages.poAvgs?.[po] != null
+                                ? `${result.classAverages.poAvgs[po]}%`
+                                : '—'}
+                            </td>
+                          ))}
+                          <td className="border border-slate-300 bg-violet-100 px-1 py-2 text-center tabular-nums">
+                            {result.classAverages.overallPoPct != null
+                              ? `${result.classAverages.overallPoPct}%`
+                              : '—'}
+                          </td>
+                          <td className="border border-slate-300 bg-violet-100 px-1 py-2 text-center">
+                            {result.classAverages.poLevel || '—'}
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -841,12 +837,12 @@ export default function COAttainmentPage() {
                 <div>
                   <p className="text-sm font-semibold text-emerald-800">Ready to export</p>
                   <p className="text-xs text-emerald-600">
-                    Excel file with 5 sheets: Student Marks · CO per Component · Final Attainment · Student CO · Legend
+                    Consolidated sheet: Student details · Question marks · CO attainment · PO1–PO12 · Class average
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => exportToExcel(marksheet, threshold, weightages, result)}
+                  onClick={() => exportConsolidatedAttainmentExcel(marksheet, result)}
                   className="flex items-center gap-2 rounded-full bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

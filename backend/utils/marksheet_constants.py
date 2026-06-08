@@ -23,6 +23,10 @@ SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8]
 
 CO_OPTIONS = ["CO1", "CO2", "CO3", "CO4", "CO5", "CO6", "CO7", "CO8"]
 
+PO_OPTIONS = [f"PO{i}" for i in range(1, 13)]
+
+CO_PO_MAPPING_LEVELS = [0, 1, 2, 3]
+
 MARK_OPTIONS = ["1", "2", "13", "14", "16"]
 
 ASSESSMENT_COMPONENTS = [

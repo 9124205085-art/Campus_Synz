@@ -5,8 +5,10 @@ from utils.marksheet_constants import (
     ASSESSMENT_COMPONENTS,
     BRANCHES,
     CO_OPTIONS,
+    CO_PO_MAPPING_LEVELS,
     DEPARTMENTS,
     MARK_OPTIONS,
+    PO_OPTIONS,
     SEMESTERS,
     VALID_ASSESSMENT_IDS,
     YEARS,
@@ -22,7 +24,62 @@ def marksheet_config_payload() -> dict:
         "assessment_components": ASSESSMENT_COMPONENTS,
         "mark_options": MARK_OPTIONS,
         "co_options": CO_OPTIONS,
+        "po_options": PO_OPTIONS,
+        "co_po_mapping_levels": CO_PO_MAPPING_LEVELS,
     }
+
+
+DEFAULT_CO_PO_TEMPLATES = {
+    "CO1": {"PO1": 3, "PO2": 2, "PO3": 1, "PO6": 1, "PO7": 2},
+    "CO2": {"PO1": 2, "PO2": 3, "PO3": 2, "PO4": 1, "PO6": 1, "PO7": 2, "PO8": 1},
+    "CO3": {"PO1": 1, "PO2": 2, "PO3": 3, "PO4": 2, "PO5": 1, "PO6": 1, "PO7": 1, "PO8": 2},
+    "CO4": {"PO2": 1, "PO3": 2, "PO4": 3, "PO5": 2, "PO6": 2, "PO7": 1, "PO8": 2, "PO9": 1},
+    "CO5": {"PO1": 2, "PO3": 1, "PO4": 2, "PO5": 3, "PO6": 1, "PO7": 2, "PO8": 1, "PO9": 1, "PO10": 1},
+}
+
+
+def empty_co_po_row() -> dict:
+    return {po: 0 for po in PO_OPTIONS}
+
+
+def build_default_co_po_mapping(used_cos: list[str]) -> dict:
+    mapping = {}
+    for co in used_cos:
+        if co not in CO_OPTIONS:
+            continue
+        row = empty_co_po_row()
+        template = DEFAULT_CO_PO_TEMPLATES.get(co, {})
+        for po, level in template.items():
+            if po in row:
+                row[po] = level
+        if co not in DEFAULT_CO_PO_TEMPLATES:
+            idx = CO_OPTIONS.index(co) if co in CO_OPTIONS else 0
+            row[f"PO{min(idx + 1, 12)}"] = 2
+        mapping[co] = row
+    return mapping
+
+
+def validate_co_po_mapping(
+    mapping: dict | None, question_cos: list[str]
+) -> tuple[dict, str | None]:
+    used_cos = sorted(set(question_cos))
+    if not mapping or not isinstance(mapping, dict):
+        return build_default_co_po_mapping(used_cos), None
+
+    normalised = {}
+    for co in used_cos:
+        row = mapping.get(co) or {}
+        clean_row = empty_co_po_row()
+        for po in PO_OPTIONS:
+            try:
+                val = int(row.get(po, 0))
+            except (TypeError, ValueError):
+                return {}, f"Invalid mapping value for {co} → {po}."
+            if val not in CO_PO_MAPPING_LEVELS:
+                return {}, f"Mapping for {co} → {po} must be 0, 1, 2, or 3."
+            clean_row[po] = val
+        normalised[co] = clean_row
+    return normalised, None
 
 
 def query_students(branch: str, department: str, year: int, semester: int | None = None):

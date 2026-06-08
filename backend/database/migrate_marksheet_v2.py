@@ -42,6 +42,7 @@ def apply_marksheet_schema_updates():
         ("co_submitted", "BOOLEAN DEFAULT 0"),
         ("co_submitted_at", "DATETIME"),
         ("co_submission_data", "TEXT"),
+        ("co_po_mapping", "TEXT DEFAULT '{}'"),
     ]:
         _add_column_if_missing("mark_sheets", col, typ)
 
