@@ -75,6 +75,7 @@ class User(db.Model):
         return check_password_hash(self.password_hash, password)
 
     def to_dict(self) -> dict:
+        dept = self.department_rel
         return {
             "id": self.id,
             "employee_id": self.employee_id or "",
@@ -84,8 +85,9 @@ class User(db.Model):
             "role": self.role,
             "designation": self.designation or self.role,
             "full_name": self.full_name,
-            "department": self.department,
+            "department": dept.name if dept else None,
             "department_id": self.department_id,
+            "department_detail": dept.to_dict() if dept else None,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
@@ -186,6 +188,43 @@ class Student(db.Model):
         }
 
 
+class FacultyClassRoster(db.Model):
+    """Faculty-managed class list reused across mark sheets."""
+
+    __tablename__ = "faculty_class_rosters"
+
+    id = db.Column(db.Integer, primary_key=True)
+    faculty_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    branch = db.Column(db.String(80), nullable=False)
+    department = db.Column(db.String(120), nullable=False)
+    year = db.Column(db.Integer, nullable=False)
+    semester = db.Column(db.Integer, nullable=False)
+    students = db.Column(db.JSON, nullable=False, default=list)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    faculty = db.relationship("User", backref="class_rosters")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "faculty_id", "branch", "department", "year", "semester",
+            name="uq_faculty_class_roster",
+        ),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "faculty_id": self.faculty_id,
+            "branch": self.branch,
+            "department": self.department,
+            "year": self.year,
+            "semester": self.semester,
+            "students": self.students or [],
+            "count": len(self.students or []),
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class MarkSheet(db.Model):
     """Faculty mark entry sheet."""
 
@@ -200,6 +239,8 @@ class MarkSheet(db.Model):
     department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), nullable=True)
     department_label = db.Column(db.String(120), nullable=False, default="")
     branch = db.Column(db.String(80), nullable=False, default="")
+    batch = db.Column(db.String(40), nullable=False, default="")
+    section = db.Column(db.String(20), nullable=False, default="")
     year = db.Column(db.Integer, nullable=True)
     semester = db.Column(db.Integer, nullable=True)
     num_students = db.Column(db.Integer, nullable=False)
@@ -215,6 +256,8 @@ class MarkSheet(db.Model):
     co_submitted_at = db.Column(db.DateTime, nullable=True)
     co_submission_data = db.Column(db.JSON, nullable=True)
     co_po_mapping = db.Column(db.JSON, nullable=False, default=dict)
+    assessment_labels = db.Column(db.JSON, nullable=False, default=dict)
+    component_settings = db.Column(db.JSON, nullable=False, default=dict)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -223,13 +266,13 @@ class MarkSheet(db.Model):
     course_assignment = db.relationship("CourseAssignment")
 
     def to_dict(self) -> dict:
-        from utils.marksheet_constants import ASSESSMENT_LABELS
-        from utils.marksheet_service import flatten_question_cos, flatten_question_marks
+        from utils.marksheet_service import flatten_question_cos, flatten_question_marks, resolve_assessment_labels
 
         components = self.assessment_components or []
         num_q = self.num_questions or 0
         flat_cos = flatten_question_cos(self.question_cos, num_q, components)
         flat_marks = flatten_question_marks(self.question_marks, num_q, components)
+        label_map = self.assessment_labels if isinstance(self.assessment_labels, dict) else {}
         return {
             "id": self.id,
             "faculty_id": self.faculty_id,
@@ -241,21 +284,70 @@ class MarkSheet(db.Model):
             or (self.department_rel.name if self.department_rel else ""),
             "department_id": self.department_id,
             "branch": self.branch or "",
+            "batch": self.batch or "",
+            "section": self.section or "",
             "year": self.year,
             "semester": self.semester,
             "num_students": self.num_students,
             "num_questions": self.num_questions,
             "assessment_components": components,
-            "assessment_labels": [ASSESSMENT_LABELS.get(c, c) for c in components],
+            "assessment_labels": resolve_assessment_labels(components, label_map),
+            "assessment_label_map": label_map,
             "question_cos": flat_cos,
             "question_marks": flat_marks,
             "student_rows": self.student_rows or [],
             "is_saved": self.is_saved,
             "passing_threshold": self.passing_threshold,
             "component_weightages": self.component_weightages or {},
+            "component_settings": self.component_settings or {},
             "co_submitted": self.co_submitted,
             "co_submitted_at": self.co_submitted_at.isoformat() if self.co_submitted_at else None,
             "co_po_mapping": self.co_po_mapping or {},
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class HodChecklistItem(db.Model):
+    """HOD-defined expected component submission per year / batch / section."""
+
+    __tablename__ = "hod_checklist_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), nullable=False, index=True)
+    course_assignment_id = db.Column(
+        db.Integer, db.ForeignKey("course_assignments.id"), nullable=True, index=True
+    )
+    year = db.Column(db.Integer, nullable=False)
+    batch = db.Column(db.String(40), nullable=False, default="")
+    section = db.Column(db.String(20), nullable=False, default="")
+    semester = db.Column(db.Integer, nullable=True)
+    course_code = db.Column(db.String(20), nullable=False)
+    course_name = db.Column(db.String(200), nullable=False, default="")
+    component_id = db.Column(db.String(60), nullable=False, default="")
+    component_label = db.Column(db.String(120), nullable=False, default="")
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    department_rel = db.relationship("Department")
+    course_assignment = db.relationship("CourseAssignment")
+    creator = db.relationship("User", foreign_keys=[created_by])
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "department_id": self.department_id,
+            "course_assignment_id": self.course_assignment_id,
+            "year": self.year,
+            "batch": self.batch or "",
+            "section": self.section or "",
+            "semester": self.semester,
+            "course_code": self.course_code,
+            "course_name": self.course_name or "",
+            "component_id": self.component_id or "",
+            "component_label": self.component_label or "",
+            "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

@@ -5,25 +5,15 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from sqlalchemy import inspect, text
-
 from app import create_app
 from extensions import db
 from models import MarkSheet, Student  # noqa: F401
-
-
-def _column_exists(table: str, column: str) -> bool:
-    inspector = inspect(db.engine)
-    if table not in inspector.get_table_names():
-        return False
-    return column in {col["name"] for col in inspector.get_columns(table)}
-
-
-def _add_column_if_missing(table: str, column: str, col_type: str) -> None:
-    if not _column_exists(table, column):
-        with db.engine.connect() as conn:
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
-            conn.commit()
+from utils.db_migration import (
+    add_column_if_missing,
+    boolean_default,
+    datetime_type,
+    json_text_default,
+)
 
 
 def apply_marksheet_schema_updates():
@@ -38,13 +28,14 @@ def apply_marksheet_schema_updates():
         ("question_marks", "TEXT"),
         ("course_assignment_id", "INTEGER"),
         ("passing_threshold", "REAL DEFAULT 60.0"),
-        ("component_weightages", "TEXT DEFAULT '{}'"),
-        ("co_submitted", "BOOLEAN DEFAULT 0"),
-        ("co_submitted_at", "DATETIME"),
+        ("component_weightages", json_text_default()),
+        ("co_submitted", boolean_default(active=False)),
+        ("co_submitted_at", datetime_type()),
         ("co_submission_data", "TEXT"),
-        ("co_po_mapping", "TEXT DEFAULT '{}'"),
+        ("co_po_mapping", json_text_default()),
+        ("assessment_labels", json_text_default()),
     ]:
-        _add_column_if_missing("mark_sheets", col, typ)
+        add_column_if_missing("mark_sheets", col, typ)
 
     db.session.commit()
 

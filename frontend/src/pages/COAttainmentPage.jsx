@@ -326,7 +326,15 @@ export default function COAttainmentPage() {
       })
       setSubmitted(true)
       setSubmitMessage(res.data.message || 'Submitted to HOD successfully.')
-      setMarksheet((prev) => (prev ? { ...prev, co_submitted: true } : prev))
+      setMarksheet((prev) =>
+        prev
+          ? {
+              ...prev,
+              co_submitted: true,
+              department_id: res.data.marksheet?.department_id ?? prev.department_id,
+            }
+          : prev,
+      )
     } catch (err) {
       setSubmitMessage(err.response?.data?.message || 'Failed to submit.')
     } finally {

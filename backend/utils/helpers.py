@@ -26,8 +26,34 @@ def department_match_key(name: str) -> str:
         "aids": "artificialintelligence",
         "btechinformationtechnology": "informationtechnology",
         "informationtechnology": "informationtechnology",
+        "mechanical": "mechanical",
+        "bemechanical": "mechanical",
+        "bemechanacial": "mechanical",
+        "mech": "mechanical",
     }
     return mappings.get(raw_key, raw_key)
+
+
+def is_valid_department(department_name: str, faculty=None) -> bool:
+    """Accept preset departments, DB departments, or the faculty's linked department."""
+    from utils.marksheet_constants import DEPARTMENTS
+
+    name = (department_name or "").strip()
+    if not name:
+        return False
+    if name in DEPARTMENTS:
+        return True
+
+    key = department_match_key(name)
+    for dept in Department.query.all():
+        if department_match_key(dept.name) == key:
+            return True
+
+    if faculty and faculty.department_id:
+        linked = Department.query.get(faculty.department_id)
+        if linked and department_match_key(linked.name) == key:
+            return True
+    return False
 
 
 def get_or_create_department(name: str) -> Department:

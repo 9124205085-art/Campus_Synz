@@ -5,26 +5,13 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 
 from app import create_app
 from extensions import db
 from models import Course, Department, User
+from utils.db_migration import add_column_if_missing
 from utils.helpers import get_or_create_department, merge_duplicate_departments
-
-
-def _column_exists(table: str, column: str) -> bool:
-    inspector = inspect(db.engine)
-    if table not in inspector.get_table_names():
-        return False
-    return column in {col["name"] for col in inspector.get_columns(table)}
-
-
-def _add_column_if_missing(table: str, column: str, col_type: str) -> None:
-    if not _column_exists(table, column):
-        with db.engine.connect() as conn:
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
-            conn.commit()
 
 
 def migrate():
@@ -32,11 +19,13 @@ def migrate():
     with app.app_context():
         db.create_all()
 
-        _add_column_if_missing("users", "department_id", "INTEGER")
-        _add_column_if_missing("courses", "department_id", "INTEGER")
+        add_column_if_missing("users", "department_id", "INTEGER")
+        add_column_if_missing("courses", "department_id", "INTEGER")
 
-        has_legacy_user_dept = _column_exists("users", "department")
-        has_legacy_course_dept = _column_exists("courses", "department")
+        from utils.db_migration import column_exists
+
+        has_legacy_user_dept = column_exists("users", "department")
+        has_legacy_course_dept = column_exists("courses", "department")
 
         if has_legacy_user_dept:
             rows = db.session.execute(text("SELECT id, department FROM users WHERE department IS NOT NULL"))
@@ -56,7 +45,6 @@ def migrate():
                     dept = get_or_create_department(row.department)
                     course.department_id = dept.id
 
-        # Seed default departments
         defaults = [
             "B.Tech Information Technology",
             "Computer Science",

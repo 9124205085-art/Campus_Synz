@@ -1,6 +1,6 @@
 """CO attainment calculations for faculty dashboard and reports."""
 
-from utils.marksheet_service import flatten_question_cos, flatten_question_marks
+from utils.marksheet_service import flatten_question_cos, flatten_question_marks, resolve_assessment_labels
 
 
 def _has_entered_marks(sheet) -> bool:
@@ -124,6 +124,10 @@ def build_faculty_dashboard_stats(sheets, target: float = 70.0) -> dict:
         avg_pct = calc["course_avg_pct"] if calc else None
         status = course_status(avg_pct, target)
 
+        components = sheet.assessment_components or []
+        label_map = sheet.assessment_labels if isinstance(sheet.assessment_labels, dict) else {}
+        component_labels = resolve_assessment_labels(components, label_map)
+
         co_breakdown = []
         if calc:
             primary = (sheet.assessment_components or [None])[0]
@@ -141,6 +145,9 @@ def build_faculty_dashboard_stats(sheets, target: float = 70.0) -> dict:
                 "co_count": calc["co_count"] if calc else len(set(flatten_question_cos(
                     sheet.question_cos, sheet.num_questions or 0, sheet.assessment_components or []
                 ))),
+                "assessment_components": components,
+                "component_labels": component_labels,
+                "components_display": ", ".join(component_labels) if component_labels else "—",
                 "avg_attainment": avg_pct,
                 "status": status,
                 "co_breakdown": co_breakdown,

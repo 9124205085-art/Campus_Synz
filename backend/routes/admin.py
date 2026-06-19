@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 
 from extensions import db
-from models import Course, Department, User
+from models import Course, CourseAssignment, Department, FacultyClassRoster, MarkSheet, User
 from utils.decorators import role_required
 from utils.helpers import generate_username, get_or_create_department, normalize_department_name
 from utils.user_service import (
@@ -279,6 +279,23 @@ def delete_hod(user_id):
     return jsonify({"message": "HOD deleted successfully."}), 200
 
 
+def _delete_faculty_related(user_id: int) -> None:
+    MarkSheet.query.filter_by(faculty_id=user_id).delete(synchronize_session=False)
+    FacultyClassRoster.query.filter_by(faculty_id=user_id).delete(synchronize_session=False)
+    CourseAssignment.query.filter_by(faculty_id=user_id).delete(synchronize_session=False)
+
+
+def _delete_course_related(course_id: int) -> None:
+    assignment_ids = [
+        a.id for a in CourseAssignment.query.filter_by(course_id=course_id).all()
+    ]
+    if assignment_ids:
+        MarkSheet.query.filter(MarkSheet.course_assignment_id.in_(assignment_ids)).delete(
+            synchronize_session=False
+        )
+    CourseAssignment.query.filter_by(course_id=course_id).delete(synchronize_session=False)
+
+
 # ---------- Faculty ----------
 
 @admin_bp.route("/faculty-list", methods=["GET"])
@@ -338,6 +355,7 @@ def delete_faculty(user_id):
     if not user:
         return jsonify({"message": "Faculty not found."}), 404
 
+    _delete_faculty_related(user_id)
     db.session.delete(user)
     db.session.commit()
     return jsonify({"message": "Faculty deleted successfully."}), 200
@@ -459,6 +477,7 @@ def delete_course(course_id):
     if not course:
         return jsonify({"message": "Course not found."}), 404
 
+    _delete_course_related(course_id)
     db.session.delete(course)
     db.session.commit()
     return jsonify({"message": "Course deleted successfully."}), 200

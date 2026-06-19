@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
-export default function DashboardLayout({ title, subtitle, children }) {
+export default function DashboardLayout({ title, subtitle, showLogo = false, children }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
 
@@ -14,9 +14,27 @@ export default function DashboardLayout({ title, subtitle, children }) {
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white shadow-sm">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="text-xl font-bold text-navy">{title}</h1>
-            {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
+          <div className="flex items-center gap-3 sm:gap-4">
+            {showLogo && (
+              <>
+                <img
+                  src="/kcg-logo.png"
+                  alt=""
+                  aria-hidden
+                  className="h-11 w-11 shrink-0 object-contain sm:h-12 sm:w-12"
+                />
+                <div className="border-r border-slate-200 pr-3 sm:pr-4">
+                  <p className="text-base font-black tracking-wide text-navy sm:text-lg">KCG</p>
+                  <p className="text-[10px] font-black uppercase tracking-wide text-slate-700 sm:text-xs">
+                    College of Technology
+                  </p>
+                </div>
+              </>
+            )}
+            <div>
+              <h1 className="text-xl font-bold text-navy">{title}</h1>
+              {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
+            </div>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">

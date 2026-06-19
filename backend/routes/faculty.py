@@ -4,13 +4,14 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 from datetime import datetime
 
 from extensions import db
-from models import MarkSheet, User
+from models import FacultyClassRoster, MarkSheet, User
 from utils.decorators import role_required
-from utils.helpers import get_or_create_department
-from utils.marksheet_constants import BRANCHES, CO_OPTIONS, DEPARTMENTS, SEMESTERS, YEARS
+from utils.helpers import get_or_create_department, is_valid_department
+from utils.marksheet_constants import BRANCHES, CO_OPTIONS, DEPARTMENTS, SEMESTERS, YEARS, validate_year_semester
 from utils.co_attainment_calc import build_faculty_dashboard_stats
 from utils.marksheet_service import (
     build_manual_student_rows,
+    build_roster_student_rows,
     build_student_rows,
     flatten_question_cos,
     flatten_question_marks,
@@ -21,8 +22,35 @@ from utils.marksheet_service import (
     validate_question_config,
     validate_student_rows_for_save,
 )
+from utils.assignment_service import (
+    is_assignment_component,
+    max_assignment_questions,
+    validate_assignment_student_levels,
+    validate_component_settings,
+)
+from utils.department_service import (
+    attach_submission_routing,
+    faculty_has_course_assignment,
+    filter_marksheets_to_assigned_courses,
+    get_department_hod,
+    marksheet_is_for_assigned_course,
+    sync_marksheet_department,
+)
+from utils.roster_service import get_roster, roster_student_count, save_roster
 
 faculty_bp = Blueprint("faculty", __name__)
+
+
+def _get_assigned_marksheet(faculty_id, sheet_id):
+    sheet = MarkSheet.query.filter_by(id=sheet_id, faculty_id=faculty_id).first()
+    if not sheet:
+        return None, "Mark sheet not found."
+    if not marksheet_is_for_assigned_course(sheet, faculty_id):
+        return None, (
+            "This mark sheet is not for a course assigned to you. "
+            "Use Create Mark Sheet from your assigned course on the dashboard."
+        )
+    return sheet, None
 
 
 def _empty_rows_legacy(num_students, num_questions):
@@ -51,7 +79,11 @@ def faculty_dashboard_stats():
             pass
 
     sheets = query.order_by(MarkSheet.updated_at.desc()).all()
+    sheets = filter_marksheets_to_assigned_courses(sheets, faculty_id)
     analytics = build_faculty_dashboard_stats(sheets)
+    analytics["stats"]["roster_students_count"] = roster_student_count(faculty_id)
+    if analytics["stats"].get("students_count", 0) == 0:
+        analytics["stats"]["students_count"] = analytics["stats"]["roster_students_count"]
 
     return jsonify(
         {
@@ -65,13 +97,17 @@ def faculty_dashboard_stats():
 @jwt_required()
 @role_required("faculty")
 def marksheet_config():
-    return jsonify(marksheet_config_payload()), 200
+    faculty_id = int(get_jwt_identity())
+    faculty = User.query.get(faculty_id)
+    return jsonify(marksheet_config_payload(faculty)), 200
 
 
 @faculty_bp.route("/students", methods=["GET"])
 @jwt_required()
 @role_required("faculty")
 def list_students_for_marksheet():
+    faculty_id = int(get_jwt_identity())
+    faculty = User.query.get(faculty_id)
     branch = (request.args.get("branch") or "").strip()
     department = (request.args.get("department") or "").strip()
     try:
@@ -84,12 +120,14 @@ def list_students_for_marksheet():
     errors = []
     if branch not in BRANCHES:
         errors.append("Valid branch is required.")
-    if department not in DEPARTMENTS:
+    if not is_valid_department(department, faculty):
         errors.append("Valid department is required.")
     if year not in YEARS:
         errors.append("Valid year (1–4) is required.")
-    if semester not in SEMESTERS:
-        errors.append("Valid semester (1–8) is required.")
+    else:
+        err = validate_year_semester(year, semester)
+        if err:
+            errors.append(err)
 
     if errors:
         return jsonify({"message": " ".join(errors), "errors": errors}), 400
@@ -103,16 +141,113 @@ def list_students_for_marksheet():
     ), 200
 
 
+@faculty_bp.route("/student-roster", methods=["GET"])
+@jwt_required()
+@role_required("faculty")
+def get_student_roster():
+    faculty_id = int(get_jwt_identity())
+    faculty = User.query.get(faculty_id)
+    branch = (request.args.get("branch") or "").strip()
+    department = (request.args.get("department") or "").strip()
+    try:
+        year = int(request.args.get("year") or 0)
+        semester = int(request.args.get("semester") or 0)
+    except (TypeError, ValueError):
+        year = 0
+        semester = 0
+
+    errors = []
+    if branch not in BRANCHES:
+        errors.append("Valid branch is required.")
+    if not is_valid_department(department, faculty):
+        errors.append("Valid department is required.")
+    if year not in YEARS:
+        errors.append("Valid year (1–4) is required.")
+    else:
+        err = validate_year_semester(year, semester)
+        if err:
+            errors.append(err)
+    if errors:
+        return jsonify({"message": " ".join(errors), "errors": errors}), 400
+
+    roster = get_roster(faculty_id, branch, department, year, semester)
+    return jsonify(
+        {
+            "roster": roster.to_dict() if roster else None,
+            "count": len(roster.students) if roster else 0,
+            "students": roster.students if roster else [],
+        }
+    ), 200
+
+
+@faculty_bp.route("/student-roster", methods=["PUT"])
+@jwt_required()
+@role_required("faculty")
+def upsert_student_roster():
+    faculty_id = int(get_jwt_identity())
+    faculty = User.query.get(faculty_id)
+    data = request.get_json(silent=True) or {}
+    branch = (data.get("branch") or "").strip()
+    department = (data.get("department") or "").strip()
+    try:
+        year = int(data.get("year") or 0)
+        semester = int(data.get("semester") or 0)
+    except (TypeError, ValueError):
+        year = 0
+        semester = 0
+    students = data.get("students") or []
+
+    errors = []
+    if branch not in BRANCHES:
+        errors.append("Valid branch is required.")
+    if not is_valid_department(department, faculty):
+        errors.append("Valid department is required.")
+    if year not in YEARS:
+        errors.append("Valid year (1–4) is required.")
+    else:
+        err = validate_year_semester(year, semester)
+        if err:
+            errors.append(err)
+    if errors:
+        return jsonify({"message": " ".join(errors), "errors": errors}), 400
+
+    roster, err = save_roster(faculty_id, branch, department, year, semester, students)
+    if err:
+        return jsonify({"message": err}), 400
+
+    db.session.commit()
+    return jsonify(
+        {"message": "Class list saved.", "roster": roster.to_dict()}
+    ), 200
+
+
+@faculty_bp.route("/student-roster/summary", methods=["GET"])
+@jwt_required()
+@role_required("faculty")
+def student_roster_summary():
+    faculty_id = int(get_jwt_identity())
+    rosters = FacultyClassRoster.query.filter_by(faculty_id=faculty_id).all()
+    total = sum(len(r.students or []) for r in rosters)
+    return jsonify(
+        {
+            "total_students": total,
+            "roster_count": len(rosters),
+            "rosters": [r.to_dict() for r in rosters],
+        }
+    ), 200
+
+
 @faculty_bp.route("/marksheets", methods=["GET"])
 @jwt_required()
 @role_required("faculty")
 def list_marksheets():
     faculty_id = int(get_jwt_identity())
     sheets = (
-        MarkSheet.query.filter_by(faculty_id=faculty_id, is_saved=True)
+        MarkSheet.query.filter_by(faculty_id=faculty_id)
         .order_by(MarkSheet.updated_at.desc())
         .all()
     )
+    sheets = filter_marksheets_to_assigned_courses(sheets, faculty_id)
     return jsonify({"marksheets": [s.to_dict() for s in sheets]}), 200
 
 
@@ -121,9 +256,9 @@ def list_marksheets():
 @role_required("faculty")
 def get_marksheet(sheet_id):
     faculty_id = int(get_jwt_identity())
-    sheet = MarkSheet.query.filter_by(id=sheet_id, faculty_id=faculty_id).first()
-    if not sheet:
-        return jsonify({"message": "Mark sheet not found."}), 404
+    sheet, err = _get_assigned_marksheet(faculty_id, sheet_id)
+    if err:
+        return jsonify({"message": err}), 404
     payload = marksheet_config_payload()
     return jsonify(
         {
@@ -160,12 +295,12 @@ def create_marksheet():
     regulation = (data.get("regulation") or "").strip()
     department_name = (data.get("department") or "").strip()
     branch = (data.get("branch") or "").strip()
+    batch = (data.get("batch") or "").strip()
+    section = (data.get("section") or "").strip().upper()
     department_id = data.get("department_id")
     assessment_raw = data.get("assessment_components") or []
 
     errors = []
-    if num_questions < 1 or num_questions > 50:
-        errors.append("Number of questions must be between 1 and 50.")
     if not course_name:
         errors.append("Course name is required.")
     if not course_code:
@@ -174,14 +309,31 @@ def create_marksheet():
         errors.append("Regulation is required.")
     if branch not in BRANCHES:
         errors.append("Valid branch is required.")
-    if department_name not in DEPARTMENTS:
+    if not is_valid_department(department_name, faculty):
         errors.append("Valid department is required.")
     if year not in YEARS:
         errors.append("Valid year (1–4) is required.")
-    if semester not in SEMESTERS:
-        errors.append("Valid semester (1–8) is required.")
+    else:
+        err = validate_year_semester(year, semester)
+        if err:
+            errors.append(err)
 
-    assessment_ids, assess_err = validate_assessments(assessment_raw)
+    if (
+        not errors
+        and faculty
+        and course_code
+        and year
+        and semester
+        and not faculty_has_course_assignment(faculty_id, course_code, year, semester)
+    ):
+        errors.append(
+            "This course is not assigned to you for the selected year and semester. "
+            "Use one of your assigned courses from the dashboard."
+        )
+
+    assessment_ids, custom_assessment_labels, assess_err = validate_assessments(
+        assessment_raw, data.get("assessment_component_labels")
+    )
     if assess_err:
         errors.append(assess_err)
 
@@ -199,26 +351,61 @@ def create_marksheet():
     if map_err:
         errors.append(map_err)
 
+    component_settings, settings_err = validate_component_settings(
+        data.get("component_settings"),
+        assessment_ids or [],
+        custom_assessment_labels,
+        num_questions,
+    )
+    if settings_err:
+        errors.append(settings_err)
+
+    assignment_max_q = max_assignment_questions(
+        component_settings, assessment_ids or [], custom_assessment_labels
+    )
+    if assignment_max_q > num_questions:
+        num_questions = assignment_max_q
+
+    if num_questions < 1 or num_questions > 50:
+        errors.append("Number of questions must be between 1 and 50.")
+
     if student_source == "database":
         pass
+    elif student_source == "roster":
+        roster = get_roster(faculty_id, branch, department_name, year, semester)
+        roster_size = len(roster.students) if roster else 0
+        if roster_size == 0:
+            errors.append(
+                "No saved class list for this selection. Add students from the Dashboard Students card."
+            )
+        elif num_students < 1 or num_students > roster_size:
+            errors.append(
+                f"Number of students must be between 1 and {roster_size} (your saved class list size)."
+            )
     elif student_source == "manual":
         if num_students < 1 or num_students > 200:
             errors.append("Number of students must be between 1 and 200 for manual entry.")
     else:
-        errors.append('student_source must be "manual" or "database".')
+        errors.append('student_source must be "roster", "manual", or "database".')
 
     department = None
-    if department_id:
+    if faculty and faculty.department_id:
         from models import Department
+
+        department = Department.query.get(faculty.department_id)
+        if department:
+            department_name = department.name
+    elif department_id:
+        from models import Department
+
         department = Department.query.get(int(department_id))
     elif department_name:
         department = get_or_create_department(department_name)
-    elif faculty and faculty.department_id:
-        from models import Department
-        department = Department.query.get(faculty.department_id)
 
     if not department:
         errors.append("Department is required.")
+    elif faculty and faculty.department_id and department.id != faculty.department_id:
+        errors.append("Mark sheets must use your assigned department.")
 
     student_rows = []
     if not errors and assessment_ids:
@@ -230,6 +417,13 @@ def create_marksheet():
                 )
             else:
                 student_rows = build_student_rows(students, assessment_ids, num_questions)
+        elif student_source == "roster":
+            roster = get_roster(faculty_id, branch, department_name, year, semester)
+            student_rows = build_roster_student_rows(
+                (roster.students or [])[:num_students],
+                assessment_ids,
+                num_questions,
+            )
         else:
             student_rows = build_manual_student_rows(
                 num_students, assessment_ids, num_questions
@@ -245,27 +439,31 @@ def create_marksheet():
         course_code=course_code,
         regulation=regulation,
         department_id=department.id,
-        department_label=department_name,
+        department_label=department.name,
         branch=branch,
+        batch=batch,
+        section=section,
         year=year,
         semester=semester,
         num_students=len(student_rows),
         num_questions=num_questions,
         assessment_components=assessment_ids,
+        assessment_labels=custom_assessment_labels,
         question_cos=question_cos,
         question_marks=question_marks,
         co_po_mapping=co_po_mapping,
+        component_settings=component_settings,
         student_rows=student_rows,
         is_saved=False,
     )
     db.session.add(sheet)
     db.session.commit()
 
-    msg = (
-        "Mark sheet created. Enter student names and marks in the grid."
-        if student_source == "manual"
-        else "Mark sheet created with students loaded from the database."
-    )
+    msg = {
+        "manual": "Mark sheet created. Enter student names and marks in the grid.",
+        "database": "Mark sheet created with students loaded from the database.",
+        "roster": "Mark sheet created with your saved class list.",
+    }.get(student_source, "Mark sheet created.")
 
     return jsonify(
         {
@@ -281,12 +479,27 @@ def create_marksheet():
 @role_required("faculty")
 def update_marksheet(sheet_id):
     faculty_id = int(get_jwt_identity())
-    sheet = MarkSheet.query.filter_by(id=sheet_id, faculty_id=faculty_id).first()
-    if not sheet:
-        return jsonify({"message": "Mark sheet not found."}), 404
+    sheet, err = _get_assigned_marksheet(faculty_id, sheet_id)
+    if err:
+        return jsonify({"message": err}), 404
 
     data = request.get_json(silent=True) or {}
     components = sheet.assessment_components or []
+    label_map = sheet.assessment_labels if isinstance(sheet.assessment_labels, dict) else {}
+    assignment_ids = [
+        cid for cid in components if is_assignment_component(cid, label_map.get(cid, ""))
+    ]
+
+    if "component_settings" in data:
+        settings, settings_err = validate_component_settings(
+            data.get("component_settings"),
+            components,
+            label_map,
+            sheet.num_questions,
+        )
+        if settings_err:
+            return jsonify({"message": settings_err}), 400
+        sheet.component_settings = settings
 
     if "question_cos" in data:
         cos, _, q_err = validate_question_config(
@@ -311,10 +524,18 @@ def update_marksheet(sheet_id):
 
         q_marks = flatten_question_marks(sheet.question_marks, sheet.num_questions, components)
         cleaned, err = validate_student_rows_for_save(
-            rows, components, sheet.num_questions, q_marks
+            rows,
+            components,
+            sheet.num_questions,
+            q_marks,
+            component_settings=sheet.component_settings or {},
+            label_map=label_map,
         )
         if err:
             return jsonify({"message": err}), 400
+        level_err = validate_assignment_student_levels(cleaned, assignment_ids)
+        if level_err:
+            return jsonify({"message": level_err}), 400
         sheet.student_rows = cleaned
         sheet.question_marks = q_marks
         sheet.question_cos = flatten_question_cos(
@@ -333,9 +554,9 @@ def update_marksheet(sheet_id):
 @role_required("faculty")
 def delete_marksheet(sheet_id):
     faculty_id = int(get_jwt_identity())
-    sheet = MarkSheet.query.filter_by(id=sheet_id, faculty_id=faculty_id).first()
-    if not sheet:
-        return jsonify({"message": "Mark sheet not found."}), 404
+    sheet, err = _get_assigned_marksheet(faculty_id, sheet_id)
+    if err:
+        return jsonify({"message": err}), 404
 
     db.session.delete(sheet)
     db.session.commit()
@@ -348,9 +569,9 @@ def delete_marksheet(sheet_id):
 def submit_co_attainment(sheet_id):
     """Faculty submits calculated CO attainment report to department HOD."""
     faculty_id = int(get_jwt_identity())
-    sheet = MarkSheet.query.filter_by(id=sheet_id, faculty_id=faculty_id).first()
-    if not sheet:
-        return jsonify({"message": "Mark sheet not found."}), 404
+    sheet, err = _get_assigned_marksheet(faculty_id, sheet_id)
+    if err:
+        return jsonify({"message": err}), 404
     if not sheet.is_saved:
         return jsonify({"message": "Save the mark sheet before submitting CO attainment."}), 400
 
@@ -373,18 +594,167 @@ def submit_co_attainment(sheet_id):
     if round(total_weight) != 100:
         return jsonify({"message": f"Weightages must sum to 100%. Currently: {total_weight}%"}), 400
 
+    faculty = User.query.get(faculty_id)
+    if not faculty or not faculty.department_id:
+        return jsonify(
+            {
+                "message": (
+                    "Your account is not linked to a department. "
+                    "Ask the admin to assign you to the correct department before submitting."
+                )
+            }
+        ), 400
+
+    sync_marksheet_department(sheet, faculty)
+
+    hod = get_department_hod(faculty.department_id)
+
     sheet.passing_threshold = threshold
     sheet.component_weightages = weightages
-    sheet.co_submission_data = submission
+    sheet.co_submission_data = attach_submission_routing(submission, faculty, hod)
     sheet.co_submitted = True
     sheet.co_submitted_at = datetime.utcnow()
     db.session.commit()
 
-    faculty = User.query.get(faculty_id)
+    dept_name = faculty.department_rel.name if faculty.department_rel else sheet.department_label
+    if hod:
+        message = f"CO attainment submitted to {hod.full_name} (HOD, {dept_name})."
+    else:
+        message = (
+            f"CO attainment saved for {dept_name}, but no active HOD is linked to this "
+            "department. Ask the admin to assign an HOD."
+        )
+
     return jsonify(
         {
-            "message": "CO attainment submitted to your department HOD.",
+            "message": message,
             "marksheet": sheet.to_dict(),
-            "faculty_name": faculty.full_name if faculty else "",
+            "faculty_name": faculty.full_name,
+            "hod_name": hod.full_name if hod else None,
+            "department": dept_name,
+        }
+    ), 200
+
+
+@faculty_bp.route("/marksheets/submit-component-report", methods=["POST"])
+@jwt_required()
+@role_required("faculty")
+def submit_component_report():
+    """Submit multi-component CO/PO summary (Assignment, CA1, CA2, etc.) to department HOD."""
+    faculty_id = int(get_jwt_identity())
+    faculty = User.query.get(faculty_id)
+    data = request.get_json(silent=True) or {}
+
+    submission = data.get("submission")
+    threshold = data.get("threshold")
+    sheet_ids = data.get("sheet_ids") or []
+
+    if threshold is None:
+        return jsonify({"message": "Threshold is required."}), 400
+    if not submission or not isinstance(submission, dict):
+        return jsonify({"message": "Component summary data is required."}), 400
+    if not sheet_ids or not isinstance(sheet_ids, list):
+        return jsonify({"message": "At least one mark sheet id is required."}), 400
+
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError):
+        return jsonify({"message": "Invalid passing threshold."}), 400
+
+    if not faculty or not faculty.department_id:
+        return jsonify(
+            {
+                "message": (
+                    "Your account is not linked to a department. "
+                    "Ask the admin to assign you before submitting."
+                )
+            }
+        ), 400
+
+    sheets = []
+    for sid in sheet_ids:
+        try:
+            sid_int = int(sid)
+        except (TypeError, ValueError):
+            continue
+        sheet, err = _get_assigned_marksheet(faculty_id, sid_int)
+        if sheet:
+            sheets.append(sheet)
+
+    if not sheets:
+        return jsonify(
+            {
+                "message": (
+                    "No valid mark sheets found for your assigned courses. "
+                    "Create and save marks only for courses assigned to you."
+                )
+            }
+        ), 404
+
+    unsaved = [s for s in sheets if not s.is_saved]
+    if unsaved:
+        return jsonify(
+            {
+                "message": (
+                    f"Save all mark sheets before submitting "
+                    f"({unsaved[0].course_code} — component sheet not saved)."
+                )
+            }
+        ), 400
+
+    primary = sheets[0]
+    for sheet in sheets:
+        sync_marksheet_department(sheet, faculty)
+
+    hod = get_department_hod(faculty.department_id)
+
+    submission_payload = attach_submission_routing(
+        {
+            **submission,
+            "reportType": "component_summary",
+            "threshold": threshold,
+            "course": {
+                **(submission.get("course") or {}),
+                "code": primary.course_code,
+                "name": primary.course_name,
+                "year": primary.year,
+                "semester": primary.semester,
+                "regulation": primary.regulation,
+                "department": primary.department_label
+                or (faculty.department_rel.name if faculty.department_rel else ""),
+            },
+        },
+        faculty,
+        hod,
+    )
+    if not submission_payload.get("components"):
+        from utils.submission_utils import components_from_submission
+
+        submission_payload["components"] = components_from_submission(submission_payload, primary)
+
+    now = datetime.utcnow()
+    for sheet in sheets:
+        sheet.passing_threshold = threshold
+        sheet.co_submission_data = submission_payload
+        sheet.co_submitted = True
+        sheet.co_submitted_at = now
+
+    db.session.commit()
+
+    dept_name = faculty.department_rel.name if faculty.department_rel else primary.department_label
+    if hod:
+        message = f"Component CO/PO summary submitted to {hod.full_name} (HOD, {dept_name})."
+    else:
+        message = (
+            f"Summary saved for {dept_name}, but no active HOD is linked. "
+            "Ask the admin to assign an HOD."
+        )
+
+    return jsonify(
+        {
+            "message": message,
+            "marksheet": primary.to_dict(),
+            "hod_name": hod.full_name if hod else None,
+            "department": dept_name,
         }
     ), 200

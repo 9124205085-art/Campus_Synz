@@ -18,6 +18,21 @@ const ADD_LABELS = {
   departments: 'Add Department',
 }
 
+function itemLabel(section, item) {
+  if (section === 'departments') return item.name
+  if (section === 'courses') return `${item.course_code} — ${item.name}`
+  return item.full_name || item.name
+}
+
+function formFromItem(section, item) {
+  const base = { ...item, password: '' }
+  if (section !== 'departments') {
+    base.department_id = item.department_id || ''
+    base.name = item.full_name || item.name
+  }
+  return base
+}
+
 export default function AdminDashboard() {
   const [activeSection, setActiveSection] = useState('hods')
   const [stats, setStats] = useState(null)
@@ -62,6 +77,7 @@ export default function AdminDashboard() {
     setSelected(null)
     setPanelMode(null)
     setError('')
+    setMessage('')
     loadItems()
     loadStats()
   }, [activeSection, loadItems, loadStats])
@@ -69,6 +85,7 @@ export default function AdminDashboard() {
   const openAdd = () => {
     setSelected(null)
     setPanelMode('add')
+    setError('')
     if (activeSection === 'departments') {
       setForm({ name: '', code: '', degree: 'B.Tech', duration: '4', status: 'active' })
     } else if (activeSection === 'hods') {
@@ -96,19 +113,26 @@ export default function AdminDashboard() {
         department: '',
       })
     } else {
-      setForm({ name: '', email: '', password: '', department_id: '', department: '' })
+      setForm({
+        course_code: '',
+        name: '',
+        regulation: '',
+        department_id: '',
+        department: '',
+      })
     }
   }
 
   const openItem = (item) => {
     setSelected(item)
     setPanelMode('view')
-    const base = { ...item }
-    if (activeSection !== 'departments') {
-      base.department_id = item.department_id || ''
-      base.name = item.full_name || item.name
-    }
-    setForm(base)
+    setForm(formFromItem(activeSection, item))
+  }
+
+  const openEdit = (item) => {
+    setSelected(item)
+    setPanelMode('edit')
+    setForm(formFromItem(activeSection, item))
   }
 
   const handlePanelAction = async (action) => {
@@ -117,9 +141,8 @@ export default function AdminDashboard() {
       return
     }
 
-    if (action === 'delete' || (panelMode === 'view' && action === 'delete')) {
-      if (!window.confirm('Are you sure you want to delete this record?')) return
-      await handleDelete()
+    if (action === 'delete') {
+      await handleDelete(selected)
       return
     }
 
@@ -175,14 +198,25 @@ export default function AdminDashboard() {
     }
   }
 
-  const handleDelete = async () => {
-    if (!selected?.id) return
+  const handleDelete = async (item) => {
+    if (!item?.id) return
+    if (
+      !window.confirm(
+        `Delete "${itemLabel(activeSection, item)}"?\n\nThis action cannot be undone.`,
+      )
+    ) {
+      return
+    }
+
+    setError('')
+    setMessage('')
     setSubmitting(true)
+
     try {
-      if (activeSection === 'hods') await adminAPI.deleteHod(selected.id)
-      else if (activeSection === 'faculty') await adminAPI.deleteFaculty(selected.id)
-      else if (activeSection === 'courses') await adminAPI.deleteCourse(selected.id)
-      else await adminAPI.deleteDepartment(selected.id)
+      if (activeSection === 'hods') await adminAPI.deleteHod(item.id)
+      else if (activeSection === 'faculty') await adminAPI.deleteFaculty(item.id)
+      else if (activeSection === 'courses') await adminAPI.deleteCourse(item.id)
+      else await adminAPI.deleteDepartment(item.id)
 
       setMessage('Deleted successfully.')
       setPanelMode(null)
@@ -197,7 +231,7 @@ export default function AdminDashboard() {
   }
 
   return (
-    <DashboardLayout title="Admin Dashboard" subtitle="Manage HODs, faculty, courses & departments">
+    <DashboardLayout title="Admin Dashboard" showLogo>
       {error && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
           {error}
@@ -261,10 +295,18 @@ export default function AdminDashboard() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="rounded-2xl bg-white p-6 shadow-md">
-          <h2 className="mb-4 text-lg font-semibold text-slate-800">
-            {sectionMeta?.label} — click to view details
-          </h2>
-          <ItemList section={activeSection} items={items} onSelect={openItem} selectedId={selected?.id} />
+          <h2 className="mb-1 text-lg font-semibold text-slate-800">{sectionMeta?.label}</h2>
+          <p className="mb-4 text-sm text-slate-500">
+            Click a row to view · Use Edit or Delete to update or remove
+          </p>
+          <ItemList
+            section={activeSection}
+            items={items}
+            onSelect={openItem}
+            onEdit={openEdit}
+            onDelete={handleDelete}
+            selectedId={selected?.id}
+          />
         </section>
 
         {panelMode && (
@@ -275,7 +317,7 @@ export default function AdminDashboard() {
             setForm={setForm}
             submitting={submitting}
             onSubmit={handlePanelAction}
-            onDelete={() => handlePanelAction('delete')}
+            onDelete={() => handleDelete(selected)}
             onCancel={() => {
               setPanelMode(null)
               setSelected(null)
@@ -287,21 +329,28 @@ export default function AdminDashboard() {
   )
 }
 
-function ItemList({ section, items, onSelect, selectedId }) {
+function ItemList({ section, items, onSelect, onEdit, onDelete, selectedId }) {
   if (!items.length) {
-    return <p className="text-sm text-slate-500">No records yet. Click &quot;Add New&quot; to create one.</p>
+    return (
+      <p className="text-sm text-slate-500">
+        No records yet. Click &quot;Add&quot; above to create one.
+      </p>
+    )
   }
 
   return (
     <ul className="max-h-[28rem] space-y-2 overflow-y-auto">
       {items.map((item) => (
-        <li key={item.id}>
+        <li
+          key={item.id}
+          className={`flex overflow-hidden rounded-lg border transition ${
+            selectedId === item.id ? 'border-navy bg-slate-50' : 'border-slate-100'
+          }`}
+        >
           <button
             type="button"
             onClick={() => onSelect(item)}
-            className={`w-full rounded-lg border p-4 text-left transition hover:border-navy/40 hover:bg-slate-50 ${
-              selectedId === item.id ? 'border-navy bg-slate-50' : 'border-slate-100'
-            }`}
+            className="min-w-0 flex-1 p-4 text-left hover:bg-slate-50/80"
           >
             {section === 'hods' || section === 'faculty' ? (
               <>
@@ -318,7 +367,7 @@ function ItemList({ section, items, onSelect, selectedId }) {
                 <p className="font-medium text-navy">{item.course_code}</p>
                 <p className="text-sm text-slate-700">{item.name}</p>
                 <p className="text-xs text-slate-400">
-                  {item.department} · Staff:{' '}
+                  {item.regulation} · {item.department} · Staff:{' '}
                   {item.staff?.map((s) => s.full_name).join(', ') || 'None'}
                 </p>
               </>
@@ -335,6 +384,22 @@ function ItemList({ section, items, onSelect, selectedId }) {
               </>
             )}
           </button>
+          <div className="flex shrink-0 flex-col justify-center gap-1 border-l border-slate-100 bg-white px-2 py-2">
+            <button
+              type="button"
+              onClick={() => onEdit(item)}
+              className="rounded-md px-3 py-1.5 text-xs font-semibold text-navy hover:bg-navy/10"
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(item)}
+              className="rounded-md px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+            >
+              Delete
+            </button>
+          </div>
         </li>
       ))}
     </ul>

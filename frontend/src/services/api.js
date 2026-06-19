@@ -51,18 +51,31 @@ export const hodAPI = {
   deleteAssignment: (id) => api.delete(`/hod/assignments/${id}`),
   listCoSubmissions: () => api.get('/hod/co-submissions'),
   getCoSubmission: (id) => api.get(`/hod/co-submissions/${id}`),
+  getChecklist: () => api.get('/hod/checklist'),
+  addChecklistItem: (data) => api.post('/hod/checklist', data),
+  deleteChecklistItem: (id) => api.delete(`/hod/checklist/${id}`),
+  getCourseCoAttainment: (assignmentId) =>
+    api.get('/hod/co-attainment/course', { params: { assignment_id: assignmentId } }),
+  getYearCoAttainment: (year, semester) =>
+    api.get('/hod/co-attainment/year', {
+      params: semester != null ? { year, semester } : { year },
+    }),
 }
 
 export const facultyAPI = {
   dashboardStats: (params) => api.get('/faculty/dashboard-stats', { params }),
   marksheetConfig: () => api.get('/faculty/marksheet-config'),
   previewStudents: (params) => api.get('/faculty/students', { params }),
+  getStudentRoster: (params) => api.get('/faculty/student-roster', { params }),
+  saveStudentRoster: (data) => api.put('/faculty/student-roster', data),
+  rosterSummary: () => api.get('/faculty/student-roster/summary'),
   listMarksheets: () => api.get('/faculty/marksheets'),
   getMarksheet: (id) => api.get(`/faculty/marksheets/${id}`),
   createMarksheet: (data) => api.post('/faculty/marksheets', data),
   updateMarksheet: (id, data) => api.put(`/faculty/marksheets/${id}`, data),
   deleteMarksheet: (id) => api.delete(`/faculty/marksheets/${id}`),
   submitCoAttainment: (id, data) => api.post(`/faculty/marksheets/${id}/submit-co-attainment`, data),
+  submitComponentReport: (data) => api.post('/faculty/marksheets/submit-component-report', data),
 }
 
 export const adminAPI = {

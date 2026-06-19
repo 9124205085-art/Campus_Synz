@@ -2,18 +2,107 @@ import { Fragment, useEffect, useState } from 'react'
 import AssignmentTable from '../components/AssignmentTable'
 import DashboardLayout from '../components/DashboardLayout'
 import FacultyCourseTable from '../components/FacultyCourseTable'
+import HodChecklistPanel from '../components/hod/HodChecklistPanel'
 import FormField from '../components/FormField'
 import SelectField from '../components/SelectField'
 import StatCard from '../components/StatCard'
 import { dashboardAPI, hodAPI } from '../services/api'
+import { semesterAfterYearChange, semesterOptionsForYear } from '../utils/academicTerms'
 
 function CoSubmissionDetail({ submission }) {
   const data = submission.submission || {}
   const usedCOs = data.usedCOs || submission.used_cos || []
+  const componentSummaries = data.studentSummaries || []
   const students = data.studentResults || []
   const numQ = data.numQuestions || 0
   const questionCos = data.questionCos || []
   const questionMaxMarks = data.questionMaxMarks || []
+
+  if (componentSummaries.length > 0) {
+    const compLabel = submission.component || 'Component'
+    return (
+      <div className="overflow-x-auto border-t border-slate-100 bg-slate-50/50 p-4">
+        <p className="mb-3 text-xs font-semibold text-slate-600">
+          {compLabel} — {componentSummaries.length} student(s)
+        </p>
+        <table className="min-w-full border-collapse text-xs">
+          <thead>
+            <tr className="bg-slate-100">
+              <th className="border border-slate-300 px-2 py-1.5 text-left">Reg. No</th>
+              <th className="border border-slate-300 px-2 py-1.5 text-left">Name</th>
+              <th className="border border-slate-300 px-2 py-1.5 text-center">CO Overall %</th>
+              <th className="border border-slate-300 px-2 py-1.5 text-center">PO Overall %</th>
+              <th className="border border-slate-300 px-2 py-1.5 text-center">PO Level</th>
+            </tr>
+          </thead>
+          <tbody>
+            {componentSummaries.map((s, idx) => {
+              const compId = submission.component_id
+              const block =
+                s.byComponent?.[compId] ||
+                Object.values(s.byComponent || {}).find(
+                  (b) => b?.label === submission.component,
+                ) ||
+                Object.values(s.byComponent || {})[0]
+              return (
+                <tr key={idx} className={idx % 2 ? 'bg-slate-50/80' : 'bg-white'}>
+                  <td className="border border-slate-200 px-2 py-1 font-mono">
+                    {s.register_number || '—'}
+                  </td>
+                  <td className="border border-slate-200 px-2 py-1 font-medium">
+                    {s.student_name || '—'}
+                  </td>
+                  <td className="border border-slate-200 px-1 py-1 text-center">
+                    {block?.overallCoPct != null ? `${block.overallCoPct}%` : '—'}
+                  </td>
+                  <td className="border border-slate-200 px-1 py-1 text-center">
+                    {block?.overallPoPct != null ? `${block.overallPoPct}%` : '—'}
+                  </td>
+                  <td className="border border-slate-200 px-1 py-1 text-center">
+                    {block?.poLevel || '—'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  if (students.length > 0) {
+    return (
+      <div className="overflow-x-auto border-t border-slate-100 bg-slate-50/50 p-4">
+        <p className="mb-3 text-xs font-semibold text-slate-600">
+          {submission.component || 'Component'} — {students.length} student(s)
+        </p>
+        <table className="min-w-full border-collapse text-xs">
+          <thead>
+            <tr className="bg-slate-100">
+              <th className="border border-slate-300 px-2 py-1.5 text-left">Reg. No</th>
+              <th className="border border-slate-300 px-2 py-1.5 text-left">Name</th>
+              <th className="border border-slate-300 px-2 py-1.5 text-center">Overall %</th>
+              <th className="border border-slate-300 px-2 py-1.5 text-center">COs Attained</th>
+            </tr>
+          </thead>
+          <tbody>
+            {students.map((s, idx) => (
+              <tr key={idx} className={idx % 2 ? 'bg-slate-50/80' : 'bg-white'}>
+                <td className="border border-slate-200 px-2 py-1 font-mono">{s.register_number || '—'}</td>
+                <td className="border border-slate-200 px-2 py-1 font-medium">{s.student_name || '—'}</td>
+                <td className="border border-slate-200 px-1 py-1 text-center">
+                  {s.overallPct != null ? `${s.overallPct}%` : '—'}
+                </td>
+                <td className="border border-slate-200 px-1 py-1 text-center">
+                  {s.evaluatedCount > 0 ? `${s.attainedCount}/${s.evaluatedCount}` : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
 
   if (!students.length) {
     return <p className="p-4 text-sm text-slate-500">No student data in this submission.</p>
@@ -124,6 +213,7 @@ export default function HODDashboard() {
   const [addingFaculty, setAddingFaculty] = useState(false)
   const [togglingId, setTogglingId] = useState(null)
   const [removingId, setRemovingId] = useState(null)
+  const [checklistRefreshKey, setChecklistRefreshKey] = useState(0)
   const [courseForm, setCourseForm] = useState({
     course_code: '',
     name: '',
@@ -140,6 +230,13 @@ export default function HODDashboard() {
     password: '',
   })
 
+  const loadCoSubmissions = () => {
+    hodAPI
+      .listCoSubmissions()
+      .then((res) => setCoSubmissions(res.data.submissions || []))
+      .catch(() => setCoSubmissions([]))
+  }
+
   const load = () => {
     dashboardAPI
       .hod()
@@ -151,15 +248,18 @@ export default function HODDashboard() {
       .then((res) => setFacultyList(res.data.faculty || []))
       .catch(() => setFacultyList([]))
 
-    hodAPI
-      .listCoSubmissions()
-      .then((res) => setCoSubmissions(res.data.submissions || []))
-      .catch(() => setCoSubmissions([]))
+    loadCoSubmissions()
   }
 
   useEffect(() => {
     load()
   }, [])
+
+  useEffect(() => {
+    if (checklistRefreshKey > 0) {
+      loadCoSubmissions()
+    }
+  }, [checklistRefreshKey])
 
   const handleToggleAccess = async (member) => {
     const nextActive = member.is_active === false
@@ -196,6 +296,7 @@ export default function HODDashboard() {
       await hodAPI.deleteAssignment(assignment.id)
       setMessage('Course assignment removed.')
       load()
+      setChecklistRefreshKey((k) => k + 1)
     } catch (err) {
       setError(err.response?.data?.message || 'Could not remove assignment.')
     } finally {
@@ -217,7 +318,7 @@ export default function HODDashboard() {
     setError('')
     setMessage('')
     try {
-      await hodAPI.addFaculty({
+      const res = await hodAPI.addFaculty({
         employee_id: facultyForm.employee_id,
         name: facultyForm.name,
         email: facultyForm.email,
@@ -226,7 +327,7 @@ export default function HODDashboard() {
         designation: 'faculty',
         is_active: true,
       })
-      setMessage('Faculty added successfully.')
+      setMessage(res.data?.message || 'Faculty added successfully.')
       setShowAddFaculty(false)
       setFacultyForm({ employee_id: '', name: '', email: '', mobile: '', password: '' })
       load()
@@ -253,6 +354,8 @@ export default function HODDashboard() {
       })
       setMessage('Course added and faculty assigned.')
       setShowAddCourse(false)
+      setChecklistRefreshKey((k) => k + 1)
+      loadCoSubmissions()
       setCourseForm({
         course_code: '',
         name: '',
@@ -376,73 +479,82 @@ export default function HODDashboard() {
         />
       </section>
 
+      <HodChecklistPanel
+        onMessage={setMessage}
+        onError={setError}
+        refreshKey={checklistRefreshKey}
+      />
+
       <section className="mb-8 rounded-2xl bg-white p-6 shadow-md">
-        <h2 className="mb-2 text-lg font-semibold text-slate-800">Faculty CO Attainment Submissions</h2>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-800">Faculty CO Attainment Submissions</h2>
+          <button
+            type="button"
+            onClick={loadCoSubmissions}
+            className="rounded-full border border-slate-200 px-4 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            Refresh
+          </button>
+        </div>
         <p className="mb-4 text-sm text-slate-500">
-          Reports submitted by faculty after calculating student-wise CO attainment.
+          One row per mark sheet component (e.g. Continuous Assessment 1, Continuous Assessment 2)
+          submitted by faculty.
         </p>
         {coSubmissions.length === 0 ? (
           <p className="rounded-lg bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-            No CO attainment reports submitted yet.
+            No submissions yet.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500">
-                  <th className="pb-2 pr-4">Course</th>
+                  <th className="pb-2 pr-4">Course Code</th>
+                  <th className="pb-2 pr-4">Name</th>
                   <th className="pb-2 pr-4">Faculty</th>
                   <th className="pb-2 pr-4">Year / Sem</th>
-                  <th className="pb-2 pr-4">Threshold</th>
-                  <th className="pb-2 pr-4">Final CO Levels</th>
+                  <th className="pb-2 pr-4">Component</th>
                   <th className="pb-2 pr-4">Submitted</th>
                   <th className="pb-2">Details</th>
                 </tr>
               </thead>
               <tbody>
-                {coSubmissions.map((sub) => {
-                  const finalCo = sub.final_co || {}
-                  const levels = (sub.used_cos || []).map(
-                    (co) => `${co}: L${finalCo[co]?.roundedLevel ?? '—'}`,
-                  )
-                  return (
-                    <Fragment key={sub.id}>
-                      <tr className="border-b border-slate-50 hover:bg-slate-50/80">
-                        <td className="py-3 pr-4">
-                          <span className="font-medium text-navy">{sub.course_code}</span>
-                          <span className="mt-0.5 block text-xs text-slate-500">{sub.course_name}</span>
-                        </td>
-                        <td className="py-3 pr-4">{sub.faculty_name || '—'}</td>
-                        <td className="py-3 pr-4">
-                          Year {sub.year ?? '—'} · Sem {sub.semester ?? '—'}
-                        </td>
-                        <td className="py-3 pr-4">{sub.threshold ?? 60}%</td>
-                        <td className="py-3 pr-4 text-xs">{levels.join(' · ') || '—'}</td>
-                        <td className="py-3 pr-4 text-xs text-slate-500">
-                          {sub.submitted_at
-                            ? new Date(sub.submitted_at).toLocaleString()
-                            : '—'}
-                        </td>
-                        <td className="py-3">
-                          <button
-                            type="button"
-                            onClick={() => setExpandedId(expandedId === sub.id ? null : sub.id)}
-                            className="text-sm font-medium text-navy hover:underline"
-                          >
-                            {expandedId === sub.id ? 'Hide students' : 'View students'}
-                          </button>
+                {coSubmissions.map((sub) => (
+                  <Fragment key={sub.row_id || sub.id}>
+                    <tr className="border-b border-slate-50 hover:bg-slate-50/80">
+                      <td className="py-3 pr-4 font-medium text-navy">{sub.course_code || '—'}</td>
+                      <td className="py-3 pr-4">{sub.course_name || '—'}</td>
+                      <td className="py-3 pr-4">{sub.faculty_name || '—'}</td>
+                      <td className="py-3 pr-4">
+                        Year {sub.year ?? '—'} · Sem {sub.semester ?? '—'}
+                      </td>
+                      <td className="py-3 pr-4">{sub.component || '—'}</td>
+                      <td className="py-3 pr-4 text-xs text-slate-500">
+                        {sub.submitted_at
+                          ? new Date(sub.submitted_at).toLocaleString()
+                          : '—'}
+                      </td>
+                      <td className="py-3">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedId(expandedId === (sub.row_id || sub.id) ? null : sub.row_id || sub.id)
+                          }
+                          className="text-sm font-medium text-navy hover:underline"
+                        >
+                          {expandedId === (sub.row_id || sub.id) ? 'Hide' : 'View students'}
+                        </button>
+                      </td>
+                    </tr>
+                    {expandedId === (sub.row_id || sub.id) && (
+                      <tr>
+                        <td colSpan={7} className="p-0">
+                          <CoSubmissionDetail submission={sub} />
                         </td>
                       </tr>
-                      {expandedId === sub.id && (
-                        <tr>
-                          <td colSpan={7} className="p-0">
-                            <CoSubmissionDetail submission={sub} />
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  )
-                })}
+                    )}
+                  </Fragment>
+                ))}
               </tbody>
             </table>
           </div>
@@ -546,7 +658,14 @@ export default function HODDashboard() {
                 label="Year"
                 id="hod_year"
                 value={courseForm.year}
-                onChange={(e) => setCourseForm({ ...courseForm, year: e.target.value })}
+                onChange={(e) => {
+                  const year = e.target.value
+                  setCourseForm((f) => ({
+                    ...f,
+                    year,
+                    semester: semesterAfterYearChange(year, f.semester),
+                  }))
+                }}
                 options={[1, 2, 3, 4].map((y) => ({ value: String(y), label: `Year ${y}` }))}
               />
               <SelectField
@@ -560,15 +679,16 @@ export default function HODDashboard() {
                 }))}
               />
               <SelectField
-                label="Semester (optional)"
+                label="Semester"
                 id="hod_semester"
                 value={courseForm.semester}
                 onChange={(e) => setCourseForm({ ...courseForm, semester: e.target.value })}
-                required={false}
-                options={[1, 2, 3, 4, 5, 6, 7, 8].map((s) => ({
-                  value: String(s),
-                  label: `Semester ${s}`,
-                }))}
+                disabled={!courseForm.year}
+                options={
+                  semesterOptionsForYear(courseForm.year).length
+                    ? semesterOptionsForYear(courseForm.year)
+                    : [{ value: '', label: 'Select year first' }]
+                }
               />
               <div className="flex gap-3 pt-2">
                 <button

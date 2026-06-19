@@ -6,6 +6,7 @@ export default function SelectField({
   options = [],
   placeholder = '— Select —',
   required = true,
+  disabled = false,
 }) {
   return (
     <div>
@@ -17,7 +18,8 @@ export default function SelectField({
         value={value}
         onChange={onChange}
         required={required}
-        className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-slate-800 outline-none transition focus:border-navy focus:ring-2 focus:ring-navy/20"
+        disabled={disabled}
+        className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-slate-800 outline-none transition focus:border-navy focus:ring-2 focus:ring-navy/20 disabled:cursor-not-allowed disabled:bg-slate-100"
       >
         <option value="">{placeholder}</option>
         {options.map((opt) => {

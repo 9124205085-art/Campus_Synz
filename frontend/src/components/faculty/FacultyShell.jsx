@@ -79,7 +79,10 @@ export default function FacultyShell({ children, semester, onSemesterChange, sem
               </div>
               <div className="hidden text-right sm:block">
                 <p className="text-sm font-semibold text-slate-800">{user?.full_name}</p>
-                <p className="text-xs capitalize text-slate-500">Faculty</p>
+                <p className="text-xs text-slate-500">
+                  Faculty
+                  {user?.department ? ` · ${user.department}` : ''}
+                </p>
               </div>
               <button
                 type="button"

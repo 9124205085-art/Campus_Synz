@@ -1,14 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import CoBarChart from '../components/faculty/CoBarChart'
-import CoDonutChart from '../components/faculty/CoDonutChart'
+import ComponentAttainmentPanel from '../components/faculty/ComponentAttainmentPanel'
 import FacultyShell from '../components/faculty/FacultyShell'
 import MarkSheetSetupModal from '../components/MarkSheetSetupModal'
+import StudentRosterModal, { branchFromDegree } from '../components/StudentRosterModal'
 import { dashboardAPI, facultyAPI } from '../services/api'
+import { formatSheetComponentsDisplay } from '../utils/coPoAttainment'
 
-function StatCard({ icon, label, value, sub }) {
+function StatCard({ icon, label, value, sub, onClick }) {
+  const Wrapper = onClick ? 'button' : 'div'
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-md">
+    <Wrapper
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      className={`rounded-2xl bg-white p-5 shadow-md text-left w-full ${
+        onClick ? 'cursor-pointer transition hover:shadow-lg hover:ring-2 hover:ring-navy/20' : ''
+      }`}
+    >
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm font-medium text-slate-500">{label}</p>
@@ -17,7 +25,7 @@ function StatCard({ icon, label, value, sub }) {
         </div>
         <div className="rounded-xl bg-navy/5 p-3 text-navy">{icon}</div>
       </div>
-    </div>
+    </Wrapper>
   )
 }
 
@@ -49,10 +57,13 @@ export default function FacultyDashboard() {
   const [deptData, setDeptData] = useState(null)
   const [analytics, setAnalytics] = useState(null)
   const [semester, setSemester] = useState('all')
-  const [courseFilter, setCourseFilter] = useState('all')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [showSetup, setShowSetup] = useState(false)
+  const [prefillCourse, setPrefillCourse] = useState(null)
+  const [showRoster, setShowRoster] = useState(false)
+  const [marksheetConfig, setMarksheetConfig] = useState(null)
+  const [panelRefresh, setPanelRefresh] = useState(0)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -70,15 +81,23 @@ export default function FacultyDashboard() {
       .catch((err) => {
         setError(err.response?.data?.message || 'Failed to load dashboard.')
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        setLoading(false)
+        setPanelRefresh((n) => n + 1)
+      })
   }, [semester])
+
+  useEffect(() => {
+    facultyAPI.marksheetConfig().then((res) => setMarksheetConfig(res.data)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     load()
   }, [load])
 
   const user = deptData?.user
-  const deptDetail = deptData?.department_detail
+  const deptDetail = deptData?.department_detail || user?.department_detail
+  const departmentName = deptDetail?.name || user?.department || ''
   const assignedCourses = deptData?.assigned_courses || deptData?.courses || []
   const stats = analytics?.stats || {}
   const recent = analytics?.recent_courses || []
@@ -98,15 +117,10 @@ export default function FacultyDashboard() {
     })
   }, [analytics])
 
-  const barData = useMemo(() => {
-    if (courseFilter === 'all') return analytics?.co_overview || []
-    const course = recent.find((c) => String(c.id) === courseFilter)
-    return course?.co_breakdown?.length ? course.co_breakdown : analytics?.co_overview || []
-  }, [analytics, courseFilter, recent])
-
   const handleCreateSheet = async (formData) => {
     const res = await facultyAPI.createMarksheet(formData)
     setShowSetup(false)
+    setPrefillCourse(null)
     navigate(`/faculty/marksheet/${res.data.marksheet.id}`)
   }
 
@@ -116,6 +130,14 @@ export default function FacultyDashboard() {
     stats.courses_total_with_data > 0
       ? `${stats.courses_met_target}/${stats.courses_total_with_data}`
       : '0/0'
+
+  const defaultRosterBranch = branchFromDegree(
+    deptDetail?.degree,
+    marksheetConfig?.branches || [],
+  )
+  const defaultRosterCourse = assignedCourses[0]
+  const defaultRosterYear = defaultRosterCourse?.year
+  const defaultRosterSemester = defaultRosterCourse?.semester ?? undefined
 
   return (
     <FacultyShell
@@ -135,6 +157,9 @@ export default function FacultyDashboard() {
           <p className="mt-1 text-slate-600">
             Welcome back, {user?.full_name || 'Faculty'}! 👋
           </p>
+          {departmentName && (
+            <p className="mt-1 text-sm font-medium text-navy">{departmentName}</p>
+          )}
           <label className="mt-3 flex items-center gap-2 text-xs font-medium text-slate-500 sm:hidden">
             Semester
             <select
@@ -153,29 +178,33 @@ export default function FacultyDashboard() {
         </div>
         <button
           type="button"
-          onClick={() => setShowSetup(true)}
+          onClick={() => {
+            setPrefillCourse(null)
+            setShowSetup(true)
+          }}
           className="rounded-full bg-navy px-5 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-navy-dark"
         >
           + New Mark Sheet
         </button>
       </div>
 
-      {deptDetail && (
+      {(deptDetail || departmentName) && (
         <div className="mb-6 rounded-2xl bg-white p-5 shadow-md">
           <h2 className="text-base font-semibold text-slate-800">My Department</h2>
           <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <p>
               <span className="text-slate-500">Department:</span>{' '}
-              <strong>{deptDetail.name}</strong>
+              <strong>{deptDetail?.name || departmentName}</strong>
             </p>
             <p>
-              <span className="text-slate-500">Code:</span> {deptDetail.code || '—'}
+              <span className="text-slate-500">Code:</span> {deptDetail?.code || '—'}
             </p>
             <p>
-              <span className="text-slate-500">Degree:</span> {deptDetail.degree}
+              <span className="text-slate-500">Degree:</span> {deptDetail?.degree || '—'}
             </p>
             <p>
-              <span className="text-slate-500">Duration:</span> {deptDetail.duration} years
+              <span className="text-slate-500">Duration:</span>{' '}
+              {deptDetail?.duration ? `${deptDetail.duration} years` : '—'}
             </p>
           </div>
         </div>
@@ -209,7 +238,10 @@ export default function FacultyDashboard() {
                     <td className="py-2">
                       <button
                         type="button"
-                        onClick={() => setShowSetup(true)}
+                        onClick={() => {
+                          setPrefillCourse(c)
+                          setShowSetup(true)
+                        }}
                         className="text-xs font-medium text-navy hover:underline"
                       >
                         Create Mark Sheet
@@ -240,8 +272,9 @@ export default function FacultyDashboard() {
             />
             <StatCard
               label="Students"
-              value={stats.students_count ?? 0}
-              sub="Across saved sheets"
+              value={stats.roster_students_count ?? stats.students_count ?? 0}
+              sub="Saved class list — click to manage"
+              onClick={() => setShowRoster(true)}
               icon={
                 <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -270,15 +303,7 @@ export default function FacultyDashboard() {
             />
           </div>
 
-          <div className="mb-6 grid gap-6 lg:grid-cols-2">
-            <CoBarChart
-              data={barData}
-              courseFilter={courseFilter}
-              onCourseFilterChange={setCourseFilter}
-              courses={recent}
-            />
-            <CoDonutChart distribution={analytics?.distribution} />
-          </div>
+          <ComponentAttainmentPanel refreshKey={panelRefresh} assignedCourses={assignedCourses} />
 
           <section id="recent-results" className="mb-6 rounded-2xl bg-white p-5 shadow-md sm:p-6">
               <h3 className="mb-4 text-base font-semibold text-slate-800">
@@ -296,6 +321,7 @@ export default function FacultyDashboard() {
                       <tr className="border-b border-slate-200 text-xs font-semibold uppercase text-slate-500">
                         <th className="pb-3 pr-4">Course Code</th>
                         <th className="pb-3 pr-4">Course Name</th>
+                        <th className="pb-3 pr-4">Component</th>
                         <th className="pb-3 pr-4">COs</th>
                         <th className="pb-3 pr-4">Avg Attainment</th>
                         <th className="pb-3 pr-4">Status</th>
@@ -307,6 +333,10 @@ export default function FacultyDashboard() {
                         <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/80">
                           <td className="py-3 pr-4 font-medium text-navy">{row.course_code}</td>
                           <td className="py-3 pr-4 text-slate-700">{row.course_name}</td>
+                          <td className="py-3 pr-4 text-slate-600">
+                            {row.components_display ||
+                              formatSheetComponentsDisplay(row)}
+                          </td>
                           <td className="py-3 pr-4">{row.co_count}</td>
                           <td className="py-3 pr-4 font-medium">
                             {row.avg_attainment != null ? `${row.avg_attainment}%` : '—'}
@@ -344,12 +374,29 @@ export default function FacultyDashboard() {
         </>
       )}
 
+      <StudentRosterModal
+        open={showRoster}
+        onClose={() => setShowRoster(false)}
+        onSaved={load}
+        defaultDepartment={deptDetail?.name || user?.department}
+        defaultBranch={defaultRosterBranch}
+        defaultYear={defaultRosterYear}
+        defaultSemester={defaultRosterSemester}
+        config={marksheetConfig}
+      />
+
       <MarkSheetSetupModal
         open={showSetup}
-        onClose={() => setShowSetup(false)}
+        onClose={() => {
+          setShowSetup(false)
+          setPrefillCourse(null)
+        }}
         onSubmit={handleCreateSheet}
-        defaultDepartment={user?.department}
+        defaultDepartment={deptDetail?.name || user?.department}
+        facultyUser={user}
+        departmentDetail={deptDetail}
         courses={assignedCourses.length ? assignedCourses : deptData?.courses || []}
+        prefillCourse={prefillCourse}
       />
     </FacultyShell>
   )

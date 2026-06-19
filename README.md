@@ -1,6 +1,6 @@
 # CampusSynz — College Management System
 
-A modular, beginner-friendly college management system with **Flask**, **React**, **Tailwind CSS**, **SQLite**, and **JWT authentication**.
+A modular college management system with **Flask**, **React**, **Tailwind CSS**, **PostgreSQL** (or SQLite for local dev), and **JWT authentication**.
 
 ## Features
 
@@ -42,11 +42,57 @@ college-management-system/
 | Member | Focus |
 |--------|--------|
 | Member 1 | JWT auth, login, route protection |
-| Member 2 | SQLite, SQLAlchemy models, seed data |
+| Member 2 | PostgreSQL/SQLite, SQLAlchemy models, seed data |
 | Member 3 | React UI, Tailwind, dashboards |
 | Member 4 | API testing, docs (`docs/API.md`) |
 
 ## Quick Start
+
+### Database
+
+**Option A — PostgreSQL (recommended)**
+
+1. Install [PostgreSQL 17 for Windows](https://www.postgresql.org/download/windows/) (or run `winget install PostgreSQL.PostgreSQL.17`).
+2. During setup, set the **postgres user password** to: `campussynz_dev` (or pick your own and update `.env`).
+3. Create the database in **pgAdmin** or **SQL Shell (psql)**:
+
+```sql
+CREATE DATABASE campussynz;
+```
+
+4. Enable PostgreSQL in the project:
+
+```powershell
+cd backend
+copy .env.example .env
+.\scripts\enable_postgres.ps1
+```
+
+This updates `.env`, tests the connection, and runs `init_db.py`.
+
+**Manual `.env` (if you prefer):**
+
+```env
+DATABASE_URL=postgresql://postgres:campussynz_dev@localhost:5432/campussynz
+```
+
+**Test connection anytime:**
+
+```powershell
+python database/test_db_connection.py
+```
+
+**Docker alternative** (if Docker Desktop is installed):
+
+```powershell
+docker compose up -d postgres
+cd backend
+.\scripts\enable_postgres.ps1
+```
+
+**Option B — SQLite (default, no setup)**
+
+If `DATABASE_URL` is not set, the app uses `backend/database/college.db` automatically.
 
 ### 1. Backend
 

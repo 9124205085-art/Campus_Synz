@@ -1,47 +1,23 @@
 """
-Run this ONCE from your backend folder:
-    python database/migrate_co_columns.py
-
-It adds passing_threshold and component_weightages columns to the
-existing mark_sheets table without destroying any data.
+Legacy one-off migration — use migrate_marksheet_v2.py instead.
+Works with SQLite and PostgreSQL via SQLAlchemy.
 """
 
-import sqlite3
 import os
+import sys
 
-# Adjust this path if your college.db is elsewhere
-DB_PATH = os.path.join(os.path.dirname(__file__), "college.db")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from app import create_app
+from database.migrate_marksheet_v2 import apply_marksheet_schema_updates
+
 
 def migrate():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    app = create_app()
+    with app.app_context():
+        apply_marksheet_schema_updates()
+        print("CO columns migration completed (via marksheet v2 schema).")
 
-    # Check existing columns
-    cursor.execute("PRAGMA table_info(mark_sheets)")
-    existing = {row[1] for row in cursor.fetchall()}
-    print(f"Existing columns: {existing}")
-
-    added = []
-
-    if "passing_threshold" not in existing:
-        cursor.execute(
-            "ALTER TABLE mark_sheets ADD COLUMN passing_threshold REAL DEFAULT 60.0"
-        )
-        added.append("passing_threshold")
-
-    if "component_weightages" not in existing:
-        cursor.execute(
-            "ALTER TABLE mark_sheets ADD COLUMN component_weightages TEXT DEFAULT '{}'"
-        )
-        added.append("component_weightages")
-
-    conn.commit()
-    conn.close()
-
-    if added:
-        print(f"✅ Added columns: {', '.join(added)}")
-    else:
-        print("✅ All columns already exist — nothing to do.")
 
 if __name__ == "__main__":
     migrate()

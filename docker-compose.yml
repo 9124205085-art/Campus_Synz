@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: campussynz-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: campussynz_dev
+      POSTGRES_DB: campussynz
+    ports:
+      - "5432:5432"
+    volumes:
+      - campussynz_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d campussynz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  campussynz_pg_data:

@@ -3,6 +3,7 @@
 from models import Student
 from utils.marksheet_constants import (
     ASSESSMENT_COMPONENTS,
+    ASSESSMENT_LABELS,
     BRANCHES,
     CO_OPTIONS,
     CO_PO_MAPPING_LEVELS,
@@ -15,10 +16,18 @@ from utils.marksheet_constants import (
 )
 
 
-def marksheet_config_payload() -> dict:
+def marksheet_config_payload(faculty=None) -> dict:
+    departments = list(DEPARTMENTS)
+    if faculty and getattr(faculty, "department_id", None):
+        from models import Department
+
+        linked = Department.query.get(faculty.department_id)
+        if linked and linked.name not in departments:
+            departments.append(linked.name)
+
     return {
         "branches": BRANCHES,
-        "departments": DEPARTMENTS,
+        "departments": departments,
         "years": YEARS,
         "semesters": SEMESTERS,
         "assessment_components": ASSESSMENT_COMPONENTS,
@@ -100,6 +109,25 @@ def build_student_rows(students, assessment_ids: list[str], num_questions: int) 
                 "assessment_marks": {
                     aid: ["" for _ in range(num_questions)] for aid in assessment_ids
                 },
+                "assignment_levels": {},
+            }
+        )
+    return rows
+
+
+def build_roster_student_rows(
+    roster_entries: list, assessment_ids: list[str], num_questions: int
+) -> list[dict]:
+    rows = []
+    for entry in roster_entries:
+        rows.append(
+            {
+                "student_name": (entry.get("full_name") or entry.get("student_name") or "").strip(),
+                "register_number": (entry.get("register_number") or "").strip(),
+                "assessment_marks": {
+                    aid: ["" for _ in range(num_questions)] for aid in assessment_ids
+                },
+                "assignment_levels": {},
             }
         )
     return rows
@@ -115,6 +143,7 @@ def build_manual_student_rows(
             "assessment_marks": {
                 aid: ["" for _ in range(num_questions)] for aid in assessment_ids
             },
+            "assignment_levels": {},
         }
         for _ in range(num_students)
     ]
@@ -161,17 +190,54 @@ def flatten_question_cos(raw, num_questions: int, components: list[str] | None =
     return default_question_cos(num_questions)
 
 
-def validate_assessments(components: list) -> tuple[list[str] | None, str | None]:
+def validate_assessments(
+    components: list, custom_labels: dict | None = None
+) -> tuple[list[str] | None, dict, str | None]:
+    """Validate component IDs; return ids and custom label map for storage."""
     if not components or not isinstance(components, list):
-        return None, "Select at least one mark sheet component."
-    ids = []
+        return None, {}, "Add at least one mark sheet component."
+
+    custom_labels = custom_labels or {}
+    ids: list[str] = []
+    stored_custom: dict[str, str] = {}
+
     for c in components:
         cid = str(c).strip()
-        if cid not in VALID_ASSESSMENT_IDS:
-            return None, f"Invalid assessment component: {cid}"
-        if cid not in ids:
-            ids.append(cid)
-    return ids, None
+        if not cid:
+            continue
+        if cid in VALID_ASSESSMENT_IDS:
+            if cid not in ids:
+                ids.append(cid)
+            continue
+        if cid.startswith("custom_"):
+            label = (custom_labels.get(cid) or "").strip()
+            if not label:
+                return None, {}, f"Custom component needs a name: {cid}"
+            if len(label) > 120:
+                return None, {}, "Custom component name is too long (max 120 characters)."
+            if cid not in ids:
+                ids.append(cid)
+                stored_custom[cid] = label
+            continue
+        return None, {}, f"Invalid assessment component: {cid}. Add components using a name."
+
+    if not ids:
+        return None, {}, "Add at least one mark sheet component."
+    return ids, stored_custom, None
+
+
+def slugify_custom_component_id(label: str) -> str | None:
+    import re
+
+    slug = re.sub(r"[^a-z0-9]+", "_", (label or "").strip().lower()).strip("_")
+    if not slug:
+        return None
+    return f"custom_{slug[:40]}"
+
+
+def resolve_assessment_labels(components: list, custom_labels: dict | None = None) -> list[str]:
+    custom = custom_labels or {}
+    return [custom.get(c) or ASSESSMENT_LABELS.get(c, c.replace("custom_", "").replace("_", " ").title()) for c in components]
 
 
 def validate_question_config(
@@ -228,8 +294,23 @@ def validate_assessment_marks_list(
 
 
 def validate_student_rows_for_save(
-    rows: list, components: list[str], num_questions: int, question_marks: list[str]
+    rows: list,
+    components: list[str],
+    num_questions: int,
+    question_marks: list[str],
+    *,
+    component_settings: dict | None = None,
+    label_map: dict | None = None,
 ) -> tuple[list[dict] | None, str | None]:
+    from utils.assignment_service import (
+        ASSIGNMENT_LEVELS,
+        get_level_question_count_for_student,
+        get_level_question_marks,
+        is_assignment_component,
+    )
+
+    component_settings = component_settings or {}
+    label_map = label_map or {}
     cleaned = []
     for row in rows:
         if components and "assessment_marks" in row:
@@ -239,16 +320,51 @@ def validate_student_rows_for_save(
                 marks = am.get(aid) or []
                 if len(marks) != num_questions:
                     return None, f"Each student needs marks for all questions in {aid}."
-                normalized, err = validate_assessment_marks_list(marks, question_marks)
+                row_q_marks = get_level_question_marks(
+                    aid,
+                    label_map.get(aid, ""),
+                    row.get("assignment_levels") or {},
+                    component_settings,
+                    question_marks,
+                    num_questions,
+                )
+                validate_count = get_level_question_count_for_student(
+                    aid,
+                    label_map.get(aid, ""),
+                    row.get("assignment_levels") or {},
+                    component_settings,
+                    num_questions,
+                )
+                if is_assignment_component(aid, label_map.get(aid, "")):
+                    marks_to_validate = marks[:validate_count]
+                    q_marks_to_validate = row_q_marks[:validate_count]
+                else:
+                    marks_to_validate = marks
+                    q_marks_to_validate = row_q_marks
+                normalized_partial, err = validate_assessment_marks_list(
+                    marks_to_validate, q_marks_to_validate
+                )
                 if err:
                     return None, err
+                normalized = list(marks)
+                for i, val in enumerate(normalized_partial):
+                    normalized[i] = val
                 cleaned_am[aid] = normalized
+            levels_map = row.get("assignment_levels") or {}
+            cleaned_levels = {}
+            for cid in components:
+                if not is_assignment_component(cid, label_map.get(cid, "")):
+                    continue
+                level = (levels_map.get(cid) or "").strip().lower()
+                if level in ASSIGNMENT_LEVELS:
+                    cleaned_levels[cid] = level
             cleaned.append(
                 {
                     "student_id": row.get("student_id"),
                     "student_name": (row.get("student_name") or "").strip(),
                     "register_number": (row.get("register_number") or "").strip(),
                     "assessment_marks": cleaned_am,
+                    "assignment_levels": cleaned_levels,
                 }
             )
         else:

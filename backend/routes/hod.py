@@ -2,9 +2,27 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from extensions import db
-from models import Course, CourseAssignment, MarkSheet, User
+from models import Course, CourseAssignment, HodChecklistItem, MarkSheet, User
+from utils.checklist_service import (
+    build_checklist_tree,
+    delete_checklist_for_assignment,
+)
 from utils.decorators import role_required
-from utils.department_service import get_department_dashboard_data
+from utils.department_service import (
+    get_department_dashboard_data,
+    hod_can_access_submission,
+    marksheets_submitted_to_department,
+)
+from utils.marksheet_constants import validate_year_semester
+from utils.submission_utils import (
+    build_submission_records,
+    components_from_submission,
+    flatten_submission_rows,
+    is_component_summary,
+    norm_key,
+    parse_submission_data,
+    resolve_component_label,
+)
 from utils.user_service import check_employee_id_unique, parse_staff_payload
 
 hod_bp = Blueprint("hod", __name__)
@@ -96,14 +114,23 @@ def add_department_faculty():
     faculty.set_password(payload["password"])
     db.session.add(faculty)
     db.session.commit()
+    db.session.refresh(faculty)
 
     from utils.department_service import faculty_with_course_summaries
 
+    dept_name = user.department_rel.name if user.department_rel else "your department"
     summary = next(
         (f for f in faculty_with_course_summaries(user.department_id) if f["id"] == faculty.id),
         faculty.to_dict(),
     )
-    return jsonify({"message": "Faculty added successfully.", "faculty": summary}), 201
+    return jsonify(
+        {
+            "message": f"Faculty added to {dept_name} successfully.",
+            "faculty": summary,
+            "department": dept_name,
+            "department_detail": user.department_rel.to_dict() if user.department_rel else None,
+        }
+    ), 201
 
 
 @hod_bp.route("/faculty/<int:faculty_id>/access", methods=["PATCH"])
@@ -171,6 +198,10 @@ def add_course_with_assignment():
         errors.append("Regulation is required.")
     if year not in (1, 2, 3, 4):
         errors.append("Year must be 1, 2, 3, or 4.")
+    if semester is not None:
+        err = validate_year_semester(year, semester)
+        if err:
+            errors.append(err)
     if not faculty_id:
         errors.append("Faculty is required.")
 
@@ -237,14 +268,19 @@ def delete_assignment(assignment_id):
     if assignment.course.department_id != user.department_id:
         return jsonify({"message": "Not allowed."}), 403
 
+    delete_checklist_for_assignment(assignment_id)
     db.session.delete(assignment)
     db.session.commit()
     return jsonify({"message": "Assignment removed."}), 200
 
 
 def _submission_summary(sheet: MarkSheet, faculty_name: str) -> dict:
-    data = sheet.co_submission_data or {}
+    data = parse_submission_data(sheet.co_submission_data)
+    report_type = "component_summary" if is_component_summary(data) else (data.get("reportType") or "weighted")
     final_co = data.get("finalCO") or {}
+    student_summaries = data.get("studentSummaries") or []
+    components = components_from_submission(data, sheet)
+    component_labels = [resolve_component_label(c) for c in components]
     return {
         "id": sheet.id,
         "course_code": sheet.course_code,
@@ -259,10 +295,20 @@ def _submission_summary(sheet: MarkSheet, faculty_name: str) -> dict:
         "weightages": sheet.component_weightages or {},
         "used_cos": data.get("usedCOs") or [],
         "final_co": final_co,
-        "student_count": len(data.get("studentResults") or []),
+        "report_type": report_type,
+        "components": components,
+        "component_labels": component_labels,
+        "component_display": " · ".join(component_labels) if component_labels else "—",
+        "student_count": len(student_summaries) or len(data.get("studentResults") or []),
         "submitted_at": sheet.co_submitted_at.isoformat() if sheet.co_submitted_at else None,
         "submission": data,
     }
+
+
+def _expand_submissions_for_list(sheets: list, faculty_map: dict) -> list[dict]:
+    """One table row per mark sheet component (CA1, CA2, Assignment, etc.)."""
+    records = build_submission_records(sheets, faculty_map)
+    return flatten_submission_rows(records)
 
 
 @hod_bp.route("/co-submissions", methods=["GET"])
@@ -274,14 +320,7 @@ def list_co_submissions():
     if not user or not user.department_id:
         return jsonify({"submissions": []}), 200
 
-    sheets = (
-        MarkSheet.query.filter_by(
-            department_id=user.department_id,
-            co_submitted=True,
-        )
-        .order_by(MarkSheet.co_submitted_at.desc())
-        .all()
-    )
+    sheets = marksheets_submitted_to_department(user.department_id)
 
     faculty_ids = {s.faculty_id for s in sheets}
     faculty_map = {
@@ -290,12 +329,7 @@ def list_co_submissions():
     } if faculty_ids else {}
 
     return jsonify(
-        {
-            "submissions": [
-                _submission_summary(s, faculty_map.get(s.faculty_id, ""))
-                for s in sheets
-            ]
-        }
+        {"submissions": _expand_submissions_for_list(sheets, faculty_map)}
     ), 200
 
 
@@ -307,13 +341,173 @@ def get_co_submission(sheet_id):
     if not user or not user.department_id:
         return jsonify({"message": "Department not linked."}), 400
 
-    sheet = MarkSheet.query.filter_by(
-        id=sheet_id,
-        department_id=user.department_id,
-        co_submitted=True,
-    ).first()
-    if not sheet:
+    sheet = MarkSheet.query.filter_by(id=sheet_id, co_submitted=True).first()
+    if not sheet or not hod_can_access_submission(user, sheet):
         return jsonify({"message": "Submission not found."}), 404
 
     faculty = User.query.get(sheet.faculty_id)
     return jsonify({"submission": _submission_summary(sheet, faculty.full_name if faculty else "")}), 200
+
+
+@hod_bp.route("/checklist", methods=["GET"])
+@jwt_required()
+@role_required("hod")
+def get_checklist():
+    """Year / batch / section checklist with auto-tick from faculty component submissions."""
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"years": [], "summary": {"total": 0, "completed": 0, "pending": 0}}), 200
+
+    return jsonify(build_checklist_tree(user.department_id)), 200
+
+
+@hod_bp.route("/checklist", methods=["POST"])
+@jwt_required()
+@role_required("hod")
+def add_checklist_item():
+    """HOD assigns a mark sheet component to an assigned course."""
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"message": "Your account is not linked to a department."}), 400
+
+    data = request.get_json(silent=True) or {}
+    component_id = (data.get("component_id") or "").strip()
+    component_label = (data.get("component_label") or data.get("component") or "").strip()
+
+    try:
+        assignment_id = int(data.get("course_assignment_id") or data.get("assignment_id") or 0)
+    except (TypeError, ValueError):
+        assignment_id = 0
+
+    errors = []
+    if not assignment_id:
+        errors.append("Course assignment is required.")
+    if not component_label and not component_id:
+        errors.append("Mark sheet component is required.")
+
+    if errors:
+        return jsonify({"message": " ".join(errors), "errors": errors}), 400
+
+    assignment = (
+        CourseAssignment.query.join(Course, CourseAssignment.course_id == Course.id)
+        .filter(
+            CourseAssignment.id == assignment_id,
+            Course.department_id == user.department_id,
+        )
+        .first()
+    )
+    if not assignment or not assignment.course:
+        return jsonify({"message": "Course assignment not found in your department."}), 404
+
+    course = assignment.course
+    norm_id = norm_key(component_id or component_label)
+    existing = HodChecklistItem.query.filter_by(
+        course_assignment_id=assignment.id,
+    ).all()
+    for row in existing:
+        if norm_key(row.component_id or row.component_label) == norm_id:
+            return jsonify({"message": "This component is already assigned to the course."}), 409
+
+    item = HodChecklistItem(
+        department_id=user.department_id,
+        course_assignment_id=assignment.id,
+        year=assignment.year,
+        semester=assignment.semester,
+        course_code=course.course_code,
+        course_name=course.name,
+        component_id=component_id,
+        component_label=component_label,
+        created_by=user.id,
+    )
+    db.session.add(item)
+    db.session.commit()
+
+    from utils.checklist_service import collect_component_submissions, item_with_status
+
+    submissions = collect_component_submissions(user.department_id)
+    return jsonify(
+        {
+            "message": "Component assigned to course checklist.",
+            "item": item_with_status(item, submissions, assignment.faculty_id),
+        }
+    ), 201
+
+
+@hod_bp.route("/checklist/<int:item_id>", methods=["DELETE"])
+@jwt_required()
+@role_required("hod")
+def delete_checklist_item(item_id):
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"message": "Department not linked."}), 400
+
+    item = HodChecklistItem.query.filter_by(
+        id=item_id, department_id=user.department_id
+    ).first()
+    if not item:
+        return jsonify({"message": "Checklist item not found."}), 404
+
+    db.session.delete(item)
+    db.session.commit()
+    return jsonify({"message": "Checklist item removed."}), 200
+
+
+@hod_bp.route("/co-attainment/course", methods=["GET"])
+@jwt_required()
+@role_required("hod")
+def get_course_co_attainment():
+    """Mark sheets + metadata for one assigned course (HOD view)."""
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"message": "Department not linked."}), 400
+
+    try:
+        assignment_id = int(request.args.get("assignment_id") or 0)
+    except (TypeError, ValueError):
+        assignment_id = 0
+
+    if not assignment_id:
+        return jsonify({"message": "assignment_id is required."}), 400
+
+    from utils.hod_co_attainment_service import (
+        course_attainment_payload,
+        get_assignment_for_hod,
+    )
+
+    assignment = get_assignment_for_hod(assignment_id, user.department_id)
+    if not assignment:
+        return jsonify({"message": "Course assignment not found in your department."}), 404
+
+    payload = course_attainment_payload(assignment, user.department_id)
+    return jsonify(payload), 200
+
+
+@hod_bp.route("/co-attainment/year", methods=["GET"])
+@jwt_required()
+@role_required("hod")
+def get_year_co_attainment():
+    """All assigned courses in a year with mark sheets for year-level CO/PO view."""
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"message": "Department not linked."}), 400
+
+    try:
+        year = int(request.args.get("year") or 0)
+    except (TypeError, ValueError):
+        year = 0
+
+    semester = request.args.get("semester")
+    sem_int = None
+    if semester not in (None, "", "all"):
+        try:
+            sem_int = int(semester)
+        except (TypeError, ValueError):
+            return jsonify({"message": "Invalid semester."}), 400
+
+    if year not in (1, 2, 3, 4):
+        return jsonify({"message": "Valid year (1–4) is required."}), 400
+
+    from utils.hod_co_attainment_service import year_attainment_payload
+
+    payload = year_attainment_payload(user.department_id, year, sem_int)
+    return jsonify(payload), 200

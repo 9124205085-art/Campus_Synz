@@ -30,8 +30,12 @@ def create_app(config_class=Config):
 
   with app.app_context():
     from database.migrate_marksheet_v2 import apply_marksheet_schema_updates
+    from database.migrate_hod_checklist import apply_hod_checklist_schema
+    from database.migrate_department_routing import repair_marksheet_departments
 
     apply_marksheet_schema_updates()
+    apply_hod_checklist_schema()
+    repair_marksheet_departments()
 
   @app.route("/api/health", methods=["GET"])
   def health():
