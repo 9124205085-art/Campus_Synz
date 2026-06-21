@@ -9,6 +9,8 @@ const ROLE_ROUTES = {
   faculty: '/faculty/dashboard',
 }
 
+const LOGIN_ROLES = new Set(['admin', 'hod', 'faculty'])
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     const stored = localStorage.getItem('user')
@@ -26,8 +28,15 @@ export function AuthProvider({ children }) {
     authAPI
       .me()
       .then((res) => {
-        setUser(res.data.user)
-        localStorage.setItem('user', JSON.stringify(res.data.user))
+        const profile = res.data.user
+        if (!LOGIN_ROLES.has(profile?.role)) {
+          localStorage.removeItem('access_token')
+          localStorage.removeItem('user')
+          setUser(null)
+          return
+        }
+        setUser(profile)
+        localStorage.setItem('user', JSON.stringify(profile))
       })
       .catch(() => {
         localStorage.removeItem('access_token')
@@ -40,6 +49,10 @@ export function AuthProvider({ children }) {
   const login = async (username, password) => {
     const res = await authAPI.login(username, password)
     const { access_token, user: loggedInUser } = res.data
+
+    if (!LOGIN_ROLES.has(loggedInUser?.role)) {
+      throw new Error('This account cannot sign in.')
+    }
 
     localStorage.setItem('access_token', access_token)
     localStorage.setItem('user', JSON.stringify(loggedInUser))
@@ -66,7 +79,7 @@ export function AuthProvider({ children }) {
       isAuthenticated: Boolean(user),
       login,
       logout,
-      getDashboardPath: (role) => ROLE_ROUTES[role] || '/login',
+      getDashboardPath: (role) => ROLE_ROUTES[role || user?.role] || '/login',
     }),
     [user, loading],
   )

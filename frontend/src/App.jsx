@@ -9,7 +9,7 @@ import FacultyMarkSheetPage from './pages/FacultyMarkSheetPage'
 import COAttainmentPage from './pages/COAttainmentPage'
 
 function RootRedirect() {
-  const { user, loading } = useAuth()
+  const { user, loading, getDashboardPath } = useAuth()
 
   if (loading) {
     return (
@@ -21,13 +21,7 @@ function RootRedirect() {
 
   if (!user) return <Navigate to="/login" replace />
 
-  const paths = {
-    admin: '/admin/dashboard',
-    hod: '/hod/dashboard',
-    faculty: '/faculty/dashboard',
-  }
-
-  return <Navigate to={paths[user.role] || '/login'} replace />
+  return <Navigate to={getDashboardPath(user.role)} replace />
 }
 
 export default function App() {
@@ -68,8 +62,6 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-
-      {/* ── CO Attainment Report ── */}
       <Route
         path="/faculty/marksheet/:sheetId/co-attainment"
         element={

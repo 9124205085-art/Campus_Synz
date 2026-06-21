@@ -1,4 +1,4 @@
-export default function StatCard({ label, value, accent = 'bg-navy', onClick }) {
+export default function StatCard({ label, value, sub, accent = 'bg-navy', onClick }) {
   const Tag = onClick ? 'button' : 'div'
   return (
     <Tag
@@ -11,6 +11,7 @@ export default function StatCard({ label, value, accent = 'bg-navy', onClick }) 
       <div className={`mb-4 h-1 w-12 rounded-full ${accent}`} />
       <p className="text-sm text-slate-500">{label}</p>
       <p className="mt-1 text-3xl font-bold text-slate-800">{value}</p>
+      {sub && <p className="mt-1 text-xs font-medium text-slate-500">{sub}</p>}
     </Tag>
   )
 }

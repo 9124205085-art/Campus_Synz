@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
-export default function DashboardLayout({ title, subtitle, showLogo = false, children }) {
+export default function DashboardLayout({ title, subtitle, showLogo = false, fullWidth = false, children }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
 
@@ -13,7 +13,7 @@ export default function DashboardLayout({ title, subtitle, showLogo = false, chi
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white shadow-sm">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <div className={`mx-auto flex w-full items-center justify-between px-4 py-4 sm:px-6 lg:px-8 ${fullWidth ? 'max-w-none' : 'max-w-6xl'}`}>
           <div className="flex items-center gap-3 sm:gap-4">
             {showLogo && (
               <>
@@ -52,7 +52,11 @@ export default function DashboardLayout({ title, subtitle, showLogo = false, chi
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+      <main
+        className={`mx-auto w-full px-4 py-8 sm:px-6 lg:px-8 ${fullWidth ? 'max-w-none' : 'max-w-6xl'}`}
+      >
+        {children}
+      </main>
     </div>
   )
 }

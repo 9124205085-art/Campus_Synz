@@ -1,7 +1,10 @@
 """HOD component submission checklist — courses from assignments, components assigned by HOD."""
 
 from models import Course, CourseAssignment, HodChecklistItem, User
-from utils.department_service import marksheets_submitted_to_department
+from utils.department_service import (
+    get_department_year_class_counts,
+    marksheets_submitted_to_department,
+)
 from utils.submission_utils import (
     build_submission_records,
     component_matches,
@@ -116,6 +119,8 @@ def build_checklist_tree(department_id: int) -> dict:
             "regulation": course.regulation,
             "year": assignment.year,
             "semester": assignment.semester,
+            "class_number": assignment.class_number or 1,
+            "class_label": f"Class {assignment.class_number or 1}",
             "faculty_id": faculty_id,
             "faculty_name": faculty_name,
             "components": components,
@@ -130,8 +135,13 @@ def build_checklist_tree(department_id: int) -> dict:
     for y in sorted(years.keys()):
         year_list.append({"year": y, "courses": years[y]})
 
+    class_counts = get_department_year_class_counts(department_id)
+
     return {
         "years": year_list,
+        "year_settings": [
+            {"year": y, "class_count": class_counts.get(y, 1)} for y in (1, 2, 3, 4)
+        ],
         "summary": {
             "total_courses": len(assignments),
             "total": total_components,

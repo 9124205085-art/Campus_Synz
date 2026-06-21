@@ -58,6 +58,7 @@ class User(db.Model):
     department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_login_at = db.Column(db.DateTime, nullable=True)
 
     department_rel = db.relationship("Department", back_populates="users")
     course_assignments = db.relationship("CourseAssignment", back_populates="faculty", lazy=True)
@@ -90,6 +91,7 @@ class User(db.Model):
             "department_detail": dept.to_dict() if dept else None,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None,
         }
 
 
@@ -141,6 +143,7 @@ class CourseAssignment(db.Model):
     faculty_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     year = db.Column(db.Integer, nullable=False)
     semester = db.Column(db.Integer, nullable=True)
+    class_number = db.Column(db.Integer, nullable=False, default=1)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     course = db.relationship("Course", back_populates="assignments")
@@ -153,6 +156,8 @@ class CourseAssignment(db.Model):
             "faculty_id": self.faculty_id,
             "year": self.year,
             "semester": self.semester,
+            "class_number": self.class_number or 1,
+            "class_label": f"Class {self.class_number or 1}",
             "course_code": self.course.course_code if self.course else "",
             "course_name": self.course.name if self.course else "",
             "regulation": self.course.regulation if self.course else "",
@@ -345,9 +350,77 @@ class HodChecklistItem(db.Model):
             "semester": self.semester,
             "course_code": self.course_code,
             "course_name": self.course_name or "",
-            "component_id": self.component_id or "",
-            "component_label": self.component_label or "",
-            "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class Notification(db.Model):
+    """In-app notification for faculty (e.g. HOD assigned a checklist component)."""
+
+    __tablename__ = "notifications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    type = db.Column(db.String(40), nullable=False, default="checklist_assignment")
+    title = db.Column(db.String(200), nullable=False, default="")
+    message = db.Column(db.Text, nullable=False, default="")
+    checklist_item_id = db.Column(db.Integer, db.ForeignKey("hod_checklist_items.id"), nullable=True)
+    course_assignment_id = db.Column(
+        db.Integer, db.ForeignKey("course_assignments.id"), nullable=True, index=True
+    )
+    course_code = db.Column(db.String(20), nullable=False, default="")
+    component_label = db.Column(db.String(120), nullable=False, default="")
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    is_read = db.Column(db.Boolean, nullable=False, default=False)
+    read_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    recipient = db.relationship("User", foreign_keys=[user_id])
+    creator = db.relationship("User", foreign_keys=[created_by])
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "type": self.type,
+            "title": self.title,
+            "message": self.message,
+            "checklist_item_id": self.checklist_item_id,
+            "course_assignment_id": self.course_assignment_id,
+            "course_code": self.course_code,
+            "component_label": self.component_label,
+            "created_by": self.created_by,
+            "is_read": self.is_read,
+            "read_at": self.read_at.isoformat() if self.read_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class DepartmentYearSetting(db.Model):
+    """HOD-configured class divisions per academic year."""
+
+    __tablename__ = "department_year_settings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), nullable=False, index=True)
+    year = db.Column(db.Integer, nullable=False)
+    class_count = db.Column(db.Integer, nullable=False, default=1)
+    student_count = db.Column(db.Integer, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    department_rel = db.relationship("Department", backref="year_settings")
+
+    __table_args__ = (
+        db.UniqueConstraint("department_id", "year", name="uq_department_year_setting"),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "department_id": self.department_id,
+            "year": self.year,
+            "class_count": self.class_count,
+            "student_count": self.student_count,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

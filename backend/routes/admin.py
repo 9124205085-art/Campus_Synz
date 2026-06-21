@@ -1,8 +1,19 @@
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import get_jwt_identity, jwt_required
+from sqlalchemy import or_
 
 from extensions import db
-from models import Course, CourseAssignment, Department, FacultyClassRoster, MarkSheet, User
+from models import (
+    Course,
+    CourseAssignment,
+    Department,
+    DepartmentYearSetting,
+    FacultyClassRoster,
+    HodChecklistItem,
+    MarkSheet,
+    Notification,
+    User,
+)
 from utils.decorators import role_required
 from utils.helpers import generate_username, get_or_create_department, normalize_department_name
 from utils.user_service import (
@@ -13,6 +24,123 @@ from utils.user_service import (
 )
 
 admin_bp = Blueprint("admin", __name__)
+
+
+def _user_list_item(user: User) -> dict:
+    data = user.to_dict()
+    data["name"] = user.full_name
+    return data
+
+
+# ---------- Users (admin dashboard) ----------
+
+@admin_bp.route("/users", methods=["GET"])
+@jwt_required()
+@role_required("admin")
+def list_users():
+    search = (request.args.get("q") or request.args.get("search") or "").strip()
+    role = (request.args.get("role") or "all").strip().lower()
+    status = (request.args.get("status") or "all").strip().lower()
+
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+        per_page = min(50, max(5, int(request.args.get("per_page") or 10)))
+    except (TypeError, ValueError):
+        page = 1
+        per_page = 10
+
+    query = User.query
+    if role and role != "all":
+        query = query.filter(User.role == role)
+    if status == "active":
+        query = query.filter(User.is_active.is_(True))
+    elif status == "inactive":
+        query = query.filter(User.is_active.is_(False))
+
+    if search:
+        term = f"%{search}%"
+        query = query.filter(
+            or_(
+                User.full_name.ilike(term),
+                User.email.ilike(term),
+                User.username.ilike(term),
+                User.employee_id.ilike(term),
+            )
+        )
+
+    total = query.count()
+    users = (
+        query.order_by(User.id.asc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    return jsonify(
+        {
+            "users": [_user_list_item(u) for u in users],
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "total_pages": total_pages,
+            },
+        }
+    ), 200
+
+
+@admin_bp.route("/users/<int:user_id>", methods=["GET"])
+@jwt_required()
+@role_required("admin")
+def get_user(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"message": "User not found."}), 404
+    return jsonify({"user": _user_list_item(user)}), 200
+
+
+@admin_bp.route("/users/<int:user_id>/status", methods=["PATCH"])
+@jwt_required()
+@role_required("admin")
+def set_user_status(user_id):
+    admin_id = int(get_jwt_identity())
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"message": "User not found."}), 404
+
+    data = request.get_json(silent=True) or {}
+    if "is_active" not in data:
+        return jsonify({"message": "is_active is required."}), 400
+
+    is_active = bool(data.get("is_active"))
+    if user.id == admin_id and not is_active:
+        return jsonify({"message": "You cannot deactivate your own admin account."}), 400
+
+    user.is_active = is_active
+    db.session.commit()
+    action = "activated" if is_active else "deactivated"
+    return jsonify(
+        {"message": f"User {action} successfully.", "user": _user_list_item(user)}
+    ), 200
+
+
+@admin_bp.route("/users/<int:user_id>/reset-password", methods=["POST"])
+@jwt_required()
+@role_required("admin")
+def reset_user_password(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"message": "User not found."}), 404
+
+    data = request.get_json(silent=True) or {}
+    password = (data.get("password") or "").strip()
+    if len(password) < 6:
+        return jsonify({"message": "Password must be at least 6 characters."}), 400
+
+    user.set_password(password)
+    db.session.commit()
+    return jsonify({"message": f"Password reset for {user.full_name}."}), 200
 
 
 def _resolve_department(data, required=True):
@@ -147,11 +275,7 @@ def delete_department(dept_id):
     if not dept:
         return jsonify({"message": "Department not found."}), 404
 
-    if User.query.filter_by(department_id=dept_id).count() > 0:
-        return jsonify({"message": "Cannot delete department with assigned HOD or faculty."}), 400
-    if Course.query.filter_by(department_id=dept_id).count() > 0:
-        return jsonify({"message": "Cannot delete department with assigned courses."}), 400
-
+    _delete_department_related(dept_id)
     db.session.delete(dept)
     db.session.commit()
     return jsonify({"message": "Department deleted."}), 200
@@ -274,9 +398,17 @@ def delete_hod(user_id):
     if not user:
         return jsonify({"message": "HOD not found."}), 404
 
+    _delete_hod_related(user_id)
     db.session.delete(user)
     db.session.commit()
     return jsonify({"message": "HOD deleted successfully."}), 200
+
+
+def _delete_hod_related(user_id: int) -> None:
+    HodChecklistItem.query.filter_by(created_by=user_id).update(
+        {HodChecklistItem.created_by: None}, synchronize_session=False
+    )
+    Notification.query.filter_by(user_id=user_id).delete(synchronize_session=False)
 
 
 def _delete_faculty_related(user_id: int) -> None:
@@ -286,6 +418,11 @@ def _delete_faculty_related(user_id: int) -> None:
 
 
 def _delete_course_related(course_id: int) -> None:
+    HodChecklistItem.query.filter(
+        HodChecklistItem.course_assignment_id.in_(
+            db.session.query(CourseAssignment.id).filter_by(course_id=course_id)
+        )
+    ).delete(synchronize_session=False)
     assignment_ids = [
         a.id for a in CourseAssignment.query.filter_by(course_id=course_id).all()
     ]
@@ -294,6 +431,26 @@ def _delete_course_related(course_id: int) -> None:
             synchronize_session=False
         )
     CourseAssignment.query.filter_by(course_id=course_id).delete(synchronize_session=False)
+
+
+def _delete_department_related(dept_id: int) -> None:
+    for course in Course.query.filter_by(department_id=dept_id).all():
+        _delete_course_related(course.id)
+        db.session.delete(course)
+
+    for user in User.query.filter_by(department_id=dept_id).all():
+        if user.role == "admin":
+            user.department_id = None
+            continue
+        if user.role == "faculty":
+            _delete_faculty_related(user.id)
+        elif user.role == "hod":
+            _delete_hod_related(user.id)
+        db.session.delete(user)
+
+    HodChecklistItem.query.filter_by(department_id=dept_id).delete(synchronize_session=False)
+    DepartmentYearSetting.query.filter_by(department_id=dept_id).delete(synchronize_session=False)
+    MarkSheet.query.filter_by(department_id=dept_id).delete(synchronize_session=False)
 
 
 # ---------- Faculty ----------

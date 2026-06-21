@@ -238,6 +238,17 @@ function ViewDetails({ type, item, onEdit, onDelete }) {
           <Row label="Designation" value={item.designation || item.role} />
           <Row label="Department" value={item.department} />
           <Row label="Access" value={item.is_active === false ? 'Inactive' : 'Active'} />
+          <Row label="Last login" value={item.last_login_at ? new Date(item.last_login_at).toLocaleString() : '—'} />
+        </>
+      )}
+      {type === 'Admin' && (
+        <>
+          <Row label="Name" value={item.full_name} />
+          <Row label="Email" value={item.email} />
+          <Row label="Username" value={item.username} />
+          <Row label="Role" value="Admin" />
+          <Row label="Access" value={item.is_active === false ? 'Inactive' : 'Active'} />
+          <Row label="Last login" value={item.last_login_at ? new Date(item.last_login_at).toLocaleString() : '—'} />
         </>
       )}
       {type === 'Course' && (
@@ -257,20 +268,24 @@ function ViewDetails({ type, item, onEdit, onDelete }) {
         </>
       )}
       <div className="flex gap-3 pt-4">
-        <button
-          type="button"
-          onClick={onEdit}
-          className="flex-1 rounded-full bg-navy py-2.5 text-sm font-semibold text-white"
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="rounded-full border border-red-300 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50"
-        >
-          Delete
-        </button>
+        {type !== 'Admin' && (
+          <>
+            <button
+              type="button"
+              onClick={onEdit}
+              className="flex-1 rounded-full bg-navy py-2.5 text-sm font-semibold text-white"
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              className="rounded-full border border-red-300 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50"
+            >
+              Delete
+            </button>
+          </>
+        )}
       </div>
     </div>
   )

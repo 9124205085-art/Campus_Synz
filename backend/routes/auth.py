@@ -2,9 +2,13 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 from sqlalchemy import or_
 
+from extensions import db
+from datetime import datetime
 from models import User
 
 auth_bp = Blueprint("auth", __name__)
+
+LOGIN_ROLES = frozenset({"admin", "hod", "faculty"})
 
 
 @auth_bp.route("/login", methods=["POST"])
@@ -28,9 +32,16 @@ def login():
     if not user.is_active:
         return jsonify({"message": "Your account is inactive. Contact the administrator."}), 403
 
-    if user.role in ("hod", "faculty") and user.department_rel:
-        if not user.department_rel.is_active:
-            return jsonify({"message": "Your department is inactive. Contact the administrator."}), 403
+    if user.role not in LOGIN_ROLES:
+        return jsonify(
+            {"message": "This account cannot sign in. Contact your administrator."}
+        ), 403
+
+    if user.role in ("hod", "faculty") and user.department_rel and not user.department_rel.is_active:
+        return jsonify({"message": "Your department is inactive. Contact the administrator."}), 403
+
+    user.last_login_at = datetime.utcnow()
+    db.session.commit()
 
     access_token = create_access_token(
         identity=str(user.id),
@@ -55,6 +66,9 @@ def me():
 
     if not user:
         return jsonify({"message": "User not found."}), 404
+
+    if user.role not in LOGIN_ROLES:
+        return jsonify({"message": "This account cannot sign in."}), 403
 
     return jsonify({"user": user.to_dict()}), 200
 

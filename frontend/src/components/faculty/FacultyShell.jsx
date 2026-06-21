@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import FacultyNotificationBell from './FacultyNotificationBell'
 
 function initials(name) {
   if (!name) return 'F'
@@ -55,23 +56,7 @@ export default function FacultyShell({ children, semester, onSemesterChange, sem
               </select>
             </label>
 
-            <button
-              type="button"
-              className="relative rounded-full p-2 text-slate-500 hover:bg-slate-100"
-              title="Notifications"
-            >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 00-9.33-5.03M9 17v1a3 3 0 006 0v-1M9 17H4"
-                />
-              </svg>
-              <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
-                2
-              </span>
-            </button>
+            <FacultyNotificationBell />
 
             <div className="flex items-center gap-2 border-l border-slate-200 pl-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-full bg-navy/10 text-xs font-bold text-navy">

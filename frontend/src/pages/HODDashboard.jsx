@@ -3,11 +3,29 @@ import AssignmentTable from '../components/AssignmentTable'
 import DashboardLayout from '../components/DashboardLayout'
 import FacultyCourseTable from '../components/FacultyCourseTable'
 import HodChecklistPanel from '../components/hod/HodChecklistPanel'
+import HodStatDetailsModal from '../components/hod/HodStatDetailsModal'
 import FormField from '../components/FormField'
 import SelectField from '../components/SelectField'
 import StatCard from '../components/StatCard'
 import { dashboardAPI, hodAPI } from '../services/api'
 import { semesterAfterYearChange, semesterOptionsForYear } from '../utils/academicTerms'
+
+function classCountForYear(dashboardData, year) {
+  const y = parseInt(year, 10)
+  if (!y) return 1
+  const fromStats = dashboardData?.stats?.[`classes_year_${y}`]
+  if (fromStats != null) return Math.max(1, fromStats)
+  const setting = (dashboardData?.year_settings || []).find((s) => s.year === y)
+  return Math.max(1, setting?.class_count ?? 1)
+}
+
+function classOptionsForYear(dashboardData, year) {
+  const count = classCountForYear(dashboardData, year)
+  return Array.from({ length: count }, (_, i) => ({
+    value: String(i + 1),
+    label: `Class ${i + 1}`,
+  }))
+}
 
 function CoSubmissionDetail({ submission }) {
   const data = submission.submission || {}
@@ -214,11 +232,13 @@ export default function HODDashboard() {
   const [togglingId, setTogglingId] = useState(null)
   const [removingId, setRemovingId] = useState(null)
   const [checklistRefreshKey, setChecklistRefreshKey] = useState(0)
+  const [statDetailType, setStatDetailType] = useState(null)
   const [courseForm, setCourseForm] = useState({
     course_code: '',
     name: '',
     regulation: '',
     year: '',
+    class_number: '1',
     faculty_id: '',
     semester: '',
   })
@@ -338,6 +358,13 @@ export default function HODDashboard() {
     }
   }
 
+  const handleNavigateSection = (sectionId) => {
+    const el = document.getElementById(sectionId)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
+
   const handleAddCourse = async (e) => {
     e.preventDefault()
     setSubmitting(true)
@@ -349,6 +376,7 @@ export default function HODDashboard() {
         name: courseForm.name,
         regulation: courseForm.regulation,
         year: parseInt(courseForm.year, 10),
+        class_number: parseInt(courseForm.class_number, 10),
         faculty_id: parseInt(courseForm.faculty_id, 10),
         semester: courseForm.semester ? parseInt(courseForm.semester, 10) : undefined,
       })
@@ -361,6 +389,7 @@ export default function HODDashboard() {
         name: '',
         regulation: '',
         year: '',
+        class_number: '1',
         faculty_id: '',
         semester: '',
       })
@@ -426,17 +455,71 @@ export default function HODDashboard() {
         )}
       </div>
 
-      <div className="mb-8 grid gap-6 sm:grid-cols-3">
-        <StatCard label="Faculty" value={data?.stats?.faculty_count ?? '—'} />
-        <StatCard label="Courses" value={data?.stats?.courses_count ?? '—'} accent="bg-emerald-600" />
+      <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Faculty"
+          value={data?.stats?.faculty_count ?? '—'}
+          onClick={() => setStatDetailType('faculty')}
+        />
+        <StatCard
+          label="Courses"
+          value={data?.stats?.courses_count ?? '—'}
+          accent="bg-emerald-600"
+          onClick={() => setStatDetailType('courses')}
+        />
         <StatCard
           label="Assignments"
           value={data?.stats?.assignments_count ?? '—'}
           accent="bg-blue-600"
+          onClick={() => setStatDetailType('assignments')}
+        />
+        <StatCard
+          label="Classes"
+          value={data?.stats?.class_count ?? '—'}
+          accent="bg-violet-600"
+          onClick={() => setStatDetailType('classes')}
+        />
+        <StatCard
+          label="Year 1 Students"
+          value={data?.stats?.students_year_1 ?? '—'}
+          sub={`${data?.stats?.classes_year_1 ?? 1} class${(data?.stats?.classes_year_1 ?? 1) === 1 ? '' : 'es'}`}
+          accent="bg-amber-500"
+          onClick={() => setStatDetailType('students_year_1')}
+        />
+        <StatCard
+          label="Year 2 Students"
+          value={data?.stats?.students_year_2 ?? '—'}
+          sub={`${data?.stats?.classes_year_2 ?? 1} class${(data?.stats?.classes_year_2 ?? 1) === 1 ? '' : 'es'}`}
+          accent="bg-orange-500"
+          onClick={() => setStatDetailType('students_year_2')}
+        />
+        <StatCard
+          label="Year 3 Students"
+          value={data?.stats?.students_year_3 ?? '—'}
+          sub={`${data?.stats?.classes_year_3 ?? 1} class${(data?.stats?.classes_year_3 ?? 1) === 1 ? '' : 'es'}`}
+          accent="bg-teal-600"
+          onClick={() => setStatDetailType('students_year_3')}
+        />
+        <StatCard
+          label="Year 4 Students"
+          value={data?.stats?.students_year_4 ?? '—'}
+          sub={`${data?.stats?.classes_year_4 ?? 1} class${(data?.stats?.classes_year_4 ?? 1) === 1 ? '' : 'es'}`}
+          accent="bg-indigo-600"
+          onClick={() => setStatDetailType('students_year_4')}
         />
       </div>
 
-      <section className="mb-8 rounded-2xl bg-white p-6 shadow-md">
+      {statDetailType && (
+        <HodStatDetailsModal
+          type={statDetailType}
+          dashboardData={data}
+          onClose={() => setStatDetailType(null)}
+          onNavigateSection={handleNavigateSection}
+          onRefresh={load}
+        />
+      )}
+
+      <section id="hod-faculty-section" className="mb-8 rounded-2xl bg-white p-6 shadow-md">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
           <h2 className="text-lg font-semibold text-slate-800">Faculty & Course Overview</h2>
           <button
@@ -458,7 +541,7 @@ export default function HODDashboard() {
         />
       </section>
 
-      <section className="mb-8 rounded-2xl bg-white p-6 shadow-md">
+      <section id="hod-assignments-section" className="mb-8 rounded-2xl bg-white p-6 shadow-md">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
           <h2 className="text-lg font-semibold text-slate-800">Course Assignments</h2>
           <button
@@ -663,10 +746,23 @@ export default function HODDashboard() {
                   setCourseForm((f) => ({
                     ...f,
                     year,
+                    class_number: '1',
                     semester: semesterAfterYearChange(year, f.semester),
                   }))
                 }}
                 options={[1, 2, 3, 4].map((y) => ({ value: String(y), label: `Year ${y}` }))}
+              />
+              <SelectField
+                label="Class"
+                id="hod_class"
+                value={courseForm.class_number}
+                onChange={(e) => setCourseForm({ ...courseForm, class_number: e.target.value })}
+                disabled={!courseForm.year}
+                options={
+                  courseForm.year
+                    ? classOptionsForYear(data, courseForm.year)
+                    : [{ value: '', label: 'Select year first' }]
+                }
               />
               <SelectField
                 label="Faculty"

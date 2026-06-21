@@ -26,6 +26,7 @@ export default function StudentRosterModal({
   defaultBranch,
   defaultYear,
   defaultSemester,
+  defaultClassNumber,
   config,
 }) {
   const [form, setForm] = useState({
@@ -41,6 +42,9 @@ export default function StudentRosterModal({
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [savedRosters, setSavedRosters] = useState([])
+  const [readOnly, setReadOnly] = useState(false)
+  const [rosterSource, setRosterSource] = useState(null)
+  const [classLabel, setClassLabel] = useState(null)
 
   useEffect(() => {
     if (!open) return
@@ -60,7 +64,15 @@ export default function StudentRosterModal({
         const sorted = [...rosters].sort(
           (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0),
         )
-        const latest = sorted[0]
+        const hodForYear = rosters.find(
+          (r) =>
+            r.source === 'hod_department' &&
+            defaultYear &&
+            String(r.year) === String(defaultYear) &&
+            (!defaultClassNumber || r.class_number === defaultClassNumber),
+        )
+        const hodAny = rosters.find((r) => r.source === 'hod_department')
+        const latest = hodForYear || hodAny || sorted[0]
 
         if (latest) {
           setForm({
@@ -100,7 +112,7 @@ export default function StudentRosterModal({
     return () => {
       cancelled = true
     }
-  }, [open, defaultBranch, defaultDepartment, defaultYear, defaultSemester])
+  }, [open, defaultBranch, defaultDepartment, defaultYear, defaultSemester, defaultClassNumber])
 
   useEffect(() => {
     if (!open || initializing) return
@@ -119,9 +131,15 @@ export default function StudentRosterModal({
       .then((res) => {
         const list = res.data.students || []
         setStudents(list.length ? list : [emptyStudentRow()])
+        setReadOnly(Boolean(res.data.read_only))
+        setRosterSource(res.data.source || null)
+        setClassLabel(res.data.class_label || null)
       })
       .catch((err) => {
         setStudents([emptyStudentRow()])
+        setReadOnly(false)
+        setRosterSource(null)
+        setClassLabel(null)
         setError(err.response?.data?.message || 'Could not load saved class list.')
       })
       .finally(() => setLoading(false))
@@ -159,6 +177,7 @@ export default function StudentRosterModal({
 
   const handleSave = async (e) => {
     e.preventDefault()
+    if (readOnly) return
     setError('')
     setMessage('')
     if (!form.branch || !form.department || !form.year || !form.semester) {
@@ -186,6 +205,19 @@ export default function StudentRosterModal({
   }
 
   const loadSavedRoster = (roster) => {
+    setReadOnly(Boolean(roster.read_only))
+    setRosterSource(roster.source || null)
+    setClassLabel(roster.class_label || null)
+    if (roster.source === 'hod_department' && roster.students?.length) {
+      setForm({
+        branch: roster.branch,
+        department: roster.department,
+        year: String(roster.year),
+        semester: String(roster.semester),
+      })
+      setStudents(roster.students)
+      return
+    }
     setForm({
       branch: roster.branch,
       department: roster.department,
@@ -201,8 +233,9 @@ export default function StudentRosterModal({
           <div>
             <h2 className="text-xl font-bold text-slate-800">My Class Student List</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Save names and register numbers once. They auto-fill every new mark sheet for this
-              class.
+              {readOnly
+                ? 'Department student list from your HOD for the year you are assigned to teach.'
+                : 'Save names and register numbers once. They auto-fill every new mark sheet for this class.'}
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-sm text-slate-500 hover:text-navy">
@@ -230,12 +263,20 @@ export default function StudentRosterModal({
                       : 'bg-white text-navy ring-1 ring-navy/30 hover:bg-navy/5'
                   }`}
                 >
-                  {roster.department} · Year {roster.year} · Sem {roster.semester} ({roster.count}{' '}
-                  students)
+                  {roster.department} · Year {roster.year}
+                  {roster.class_label ? ` · ${roster.class_label}` : ''} · Sem {roster.semester} (
+                  {roster.count} students{roster.source === 'hod_department' ? ' · HOD list' : ''})
                 </button>
               ))}
             </div>
           </div>
+        )}
+
+        {rosterSource === 'hod_department' && (
+          <p className="mb-3 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
+            Showing the HOD department student list for Year {form.year}
+            {classLabel ? ` · ${classLabel}` : ''} (your assigned class). This list is read-only here.
+          </p>
         )}
 
         {error && (
@@ -297,23 +338,25 @@ export default function StudentRosterModal({
             />
           </div>
 
-          <div className="flex flex-wrap items-end gap-3">
-            <FormField
-              label="Number of students"
-              id="roster_count"
-              type="number"
-              value={String(students.length)}
-              onChange={(e) => setCount(e.target.value)}
-              placeholder="e.g. 30 or 50"
-            />
-            <button
-              type="button"
-              onClick={() => setStudents((prev) => [...prev, emptyStudentRow()])}
-              className="rounded-full border border-navy px-4 py-2 text-sm font-medium text-navy"
-            >
-              + Add row
-            </button>
-          </div>
+          {!readOnly && (
+            <div className="flex flex-wrap items-end gap-3">
+              <FormField
+                label="Number of students"
+                id="roster_count"
+                type="number"
+                value={String(students.length)}
+                onChange={(e) => setCount(e.target.value)}
+                placeholder="e.g. 30 or 50"
+              />
+              <button
+                type="button"
+                onClick={() => setStudents((prev) => [...prev, emptyStudentRow()])}
+                className="rounded-full border border-navy px-4 py-2 text-sm font-medium text-navy"
+              >
+                + Add row
+              </button>
+            </div>
+          )}
 
           {initializing || loading ? (
             <p className="text-sm text-slate-500">
@@ -355,7 +398,8 @@ export default function StudentRosterModal({
                             }
                           }}
                           placeholder="e.g. 2024CSE001"
-                          className="w-full rounded border border-slate-200 px-2 py-1.5"
+                          readOnly={readOnly}
+                          className={`w-full rounded border border-slate-200 px-2 py-1.5 ${readOnly ? 'bg-slate-50' : ''}`}
                         />
                       </td>
                       <td className="px-3 py-2">
@@ -376,11 +420,12 @@ export default function StudentRosterModal({
                             }
                           }}
                           placeholder="Student name"
-                          className="w-full rounded border border-slate-200 px-2 py-1.5"
+                          readOnly={readOnly}
+                          className={`w-full rounded border border-slate-200 px-2 py-1.5 ${readOnly ? 'bg-slate-50' : ''}`}
                         />
                       </td>
                       <td className="px-3 py-2">
-                        {students.length > 1 && (
+                        {!readOnly && students.length > 1 && (
                           <button
                             type="button"
                             onClick={() =>
@@ -403,17 +448,19 @@ export default function StudentRosterModal({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 rounded-full border border-slate-300 py-2.5 text-sm"
+              className={`${readOnly ? 'w-full' : 'flex-1'} rounded-full border border-slate-300 py-2.5 text-sm`}
             >
-              Cancel
+              {readOnly ? 'Close' : 'Cancel'}
             </button>
-            <button
-              type="submit"
-              disabled={saving || loading || initializing}
-              className="flex-1 rounded-full bg-navy py-2.5 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {saving ? 'Saving…' : 'Save Class List'}
-            </button>
+            {!readOnly && (
+              <button
+                type="submit"
+                disabled={saving || loading || initializing}
+                className="flex-1 rounded-full bg-navy py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {saving ? 'Saving…' : 'Save Class List'}
+              </button>
+            )}
           </div>
         </form>
       </div>

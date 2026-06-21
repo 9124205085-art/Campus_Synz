@@ -2,7 +2,7 @@ import { Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 export default function ProtectedRoute({ children, allowedRoles }) {
-  const { user, loading } = useAuth()
+  const { user, loading, getDashboardPath } = useAuth()
 
   if (loading) {
     return (
@@ -17,12 +17,7 @@ export default function ProtectedRoute({ children, allowedRoles }) {
   }
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
-    const redirectMap = {
-      admin: '/admin/dashboard',
-      hod: '/hod/dashboard',
-      faculty: '/faculty/dashboard',
-    }
-    return <Navigate to={redirectMap[user.role] || '/login'} replace />
+    return <Navigate to={getDashboardPath(user.role)} replace />
   }
 
   return children

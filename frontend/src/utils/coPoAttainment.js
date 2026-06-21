@@ -1109,6 +1109,149 @@ function summarizeComponentBlock(data, usedCOs) {
   }
 }
 
+const ASSESSMENT_PRESET_MATCHERS = {
+  ca1: [
+    /^ca\s*[-_]?\s*1$/i,
+    /^continuous_assessment_1$/i,
+    /continuous assessment\s*[-–]?\s*1/i,
+  ],
+  ca2: [
+    /^ca\s*[-_]?\s*2$/i,
+    /^continuous_assessment_2$/i,
+    /continuous assessment\s*[-–]?\s*2/i,
+  ],
+}
+
+/** Resolve CA1 / CA2 (etc.) to the mark sheet component id. */
+export function resolvePresetComponent(marksheet, presetKey) {
+  if (!marksheet || !presetKey) return null
+  const matchers = ASSESSMENT_PRESET_MATCHERS[presetKey]
+  if (!matchers) return null
+
+  for (const id of discoverMarksheetComponents(marksheet)) {
+    const normId = String(id).trim().toLowerCase().replace(/\s+/g, '_')
+    if (normId === presetKey) return id
+    const label = assessmentLabelFor(marksheet, id)
+    if (matchers.some((re) => re.test(normId) || re.test(label))) return id
+  }
+  return null
+}
+
+/** Build one CO/PO table section for a single component. */
+function buildComponentCoPoTableSection(marksheet, componentId, threshold, coPoMapping) {
+  const result = calculateComponentAttainment(marksheet, componentId, threshold, coPoMapping)
+  if (!result?.studentsWithMarks) return null
+
+  const componentLabel = assessmentLabelFor(marksheet, componentId)
+  const rows = result.studentResults
+    .filter((s) => s.hasMarks)
+    .map((s) => {
+      const summary = summarizeComponentBlock(s, result.usedCOs)
+      return {
+        register_number: s.register_number || '—',
+        student_name: s.student_name || '—',
+        coPct: summary.overallCoPct,
+        poPct: summary.overallPoPct,
+      }
+    })
+    .sort((a, b) =>
+      String(a.register_number).localeCompare(String(b.register_number), undefined, {
+        numeric: true,
+      }),
+    )
+
+  const rowsHtml = rows
+    .map(
+      (s) => `
+      <tr>
+        <td>${escapeHtml(s.register_number)}</td>
+        <td>${escapeHtml(s.student_name)}</td>
+        <td>${escapeHtml(s.coPct != null ? `${s.coPct}%` : '—')}</td>
+        <td>${escapeHtml(s.poPct != null ? `${s.poPct}%` : '—')}</td>
+      </tr>`,
+    )
+    .join('')
+
+  return `
+  <section class="component-section">
+    <h2>${escapeHtml(componentLabel)}</h2>
+    <table>
+      <thead>
+        <tr>
+          <th rowspan="2">Reg. No</th>
+          <th rowspan="2">Student Name</th>
+          <th colspan="2" class="course-head">
+            <span class="course-code">${escapeHtml(marksheet.course_code || '')}</span>
+            <span class="course-name">${escapeHtml(marksheet.course_name || '')}</span>
+          </th>
+        </tr>
+        <tr>
+          <th>CO %</th>
+          <th>PO %</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </section>`
+}
+
+/** Simple CO % / PO % PDF for one or more assessments with completed marks. */
+export function exportComponentCoPoPdf(marksheet, componentIds, threshold = 60, coPoMapping) {
+  const ids = (componentIds || []).filter(Boolean)
+  if (!marksheet || !ids.length) return false
+
+  const sections = ids
+    .map((id) => buildComponentCoPoTableSection(marksheet, id, threshold, coPoMapping))
+    .filter(Boolean)
+  if (!sections.length) return false
+
+  const titleLabels = ids.map((id) => assessmentLabelFor(marksheet, id)).join(', ')
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(marksheet.course_code)} — CO/PO</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 11px; margin: 24px; color: #1e293b; }
+    h1 { font-size: 13px; font-weight: normal; margin: 0 0 16px; color: #475569; }
+    h2 { font-size: 12px; font-weight: 600; margin: 0 0 8px; color: #1e3a5f; }
+    .component-section { margin-bottom: 28px; page-break-inside: avoid; }
+    .component-section + .component-section { page-break-before: auto; }
+    table { border-collapse: collapse; width: 100%; max-width: 720px; }
+    th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: center; }
+    th { background: #e2e8f0; color: #334155; font-size: 11px; font-weight: 600; }
+    .course-head { background: #e2e8f0; font-size: 12px; line-height: 1.35; }
+    .course-code { font-weight: 700; display: block; }
+    .course-name { font-weight: 400; font-size: 10px; color: #64748b; display: block; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    td:nth-child(1), td:nth-child(2) { text-align: left; }
+    @media print { body { margin: 12px; } .component-section { break-inside: avoid; } }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(marksheet.course_code)} — ${escapeHtml(marksheet.course_name || '')} · Year ${marksheet.year ?? '—'} · Sem ${marksheet.semester ?? '—'}<br />
+  <span style="font-size:11px">${escapeHtml(titleLabels)}</span></h1>
+  ${sections.join('')}
+  <script>window.onload = function() { window.print(); }</script>
+</body>
+</html>`
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const win = window.open(url, '_blank')
+  if (!win) {
+    URL.revokeObjectURL(url)
+    return false
+  }
+  win.onload = () => URL.revokeObjectURL(url)
+  return true
+}
+
+/** @deprecated Use exportComponentCoPoPdf */
+export function exportSingleComponentCoPoPdf(marksheet, componentId, threshold = 60, coPoMapping) {
+  return exportComponentCoPoPdf(marksheet, [componentId], threshold, coPoMapping)
+}
+
 /** Per-student overall summary for each selected component (for PDF / HOD submit). */
 export function buildComponentSummaryExport(marksheet, report) {
   if (!marksheet || !report) return null

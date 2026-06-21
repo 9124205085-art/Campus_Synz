@@ -8,8 +8,7 @@ import {
   buildDefaultCoPoMapping,
   courseGroupKey,
   discoverCompletedComponents,
-  exportComponentSummaryPdf,
-  exportMultiComponentReportExcel,
+  exportComponentCoPoPdf,
   filterMarksheetsToAssigned,
   groupSheetsByCourse,
   mergeCourseMarksheets,
@@ -571,6 +570,8 @@ export default function ComponentAttainmentPanel({ refreshKey = 0, assignedCours
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitMessage, setSubmitMessage] = useState('')
+  const [pdfComponentIds, setPdfComponentIds] = useState([])
+  const [pdfMessage, setPdfMessage] = useState('')
 
   const courseGroups = useMemo(() => {
     const grouped = groupSheetsByCourse(sheetOptions)
@@ -641,10 +642,16 @@ export default function ComponentAttainmentPanel({ refreshKey = 0, assignedCours
   useEffect(() => {
     if (!mergedMarksheet) {
       setSelectedComponentIds([])
+      setPdfComponentIds([])
       return
     }
     setThreshold(mergedMarksheet.passing_threshold || 60)
-    setSelectedComponentIds(discoverCompletedComponents(mergedMarksheet))
+    const completed = discoverCompletedComponents(mergedMarksheet)
+    setSelectedComponentIds(completed)
+    setPdfComponentIds((prev) => {
+      const kept = prev.filter((id) => completed.includes(id))
+      return kept.length ? kept : completed
+    })
   }, [selectedCourseKey, mergedMarksheet])
 
   const coPoMapping = useMemo(() => {
@@ -673,9 +680,34 @@ export default function ComponentAttainmentPanel({ refreshKey = 0, assignedCours
     return buildComponentSummaryExport(mergedMarksheet, report)
   }, [mergedMarksheet, report])
 
-  const handleDownloadPdf = () => {
-    if (!mergedMarksheet || !summaryExport) return
-    exportComponentSummaryPdf(mergedMarksheet, summaryExport)
+  const handleDownloadCoPoPdf = () => {
+    setPdfMessage('')
+    if (!mergedMarksheet) {
+      setPdfMessage('Select a course with saved mark sheets first.')
+      return
+    }
+    if (!pdfComponentIds.length) {
+      setPdfMessage('Select at least one component with completed mark entry.')
+      return
+    }
+    const ok = exportComponentCoPoPdf(
+      mergedMarksheet,
+      pdfComponentIds,
+      threshold,
+      coPoMapping,
+    )
+    if (!ok) {
+      setPdfMessage('Could not generate PDF. Check that marks are saved for the selected components.')
+    }
+  }
+
+  const togglePdfComponent = (componentId) => {
+    setPdfMessage('')
+    setPdfComponentIds((prev) =>
+      prev.includes(componentId)
+        ? prev.filter((id) => id !== componentId)
+        : [...prev, componentId],
+    )
   }
 
   const handleSubmitToHod = async () => {
@@ -796,6 +828,72 @@ export default function ComponentAttainmentPanel({ refreshKey = 0, assignedCours
         </div>
       )}
 
+      {mergedMarksheet && (
+        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <button
+              type="button"
+              onClick={handleDownloadCoPoPdf}
+              disabled={!pdfComponentIds.length}
+              className="rounded-full bg-navy px-5 py-2 text-sm font-semibold text-white hover:bg-navy-dark disabled:opacity-50"
+            >
+              Download CO &amp; PO
+            </button>
+            {completedComponents.length > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPdfMessage('')
+                  setPdfComponentIds([...completedComponents])
+                }}
+                className="text-xs font-medium text-navy hover:underline"
+              >
+                Select all ready
+              </button>
+            )}
+          </div>
+          <p className="mt-3 text-xs font-medium text-slate-600">
+            Components with completed mark entry — select one or more for the PDF:
+          </p>
+          {completedComponents.length === 0 ? (
+            <p className="mt-2 text-sm text-amber-700">
+              No components with saved marks yet. Enter marks in the mark sheet and save first.
+            </p>
+          ) : (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {completedComponents.map((aid) => {
+                const label = assessmentLabelFor(mergedMarksheet, aid)
+                const selected = pdfComponentIds.includes(aid)
+                return (
+                  <label
+                    key={`pdf-${aid}`}
+                    className={`flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2 text-sm transition ${
+                      selected
+                        ? 'border-navy bg-white font-semibold text-navy shadow-sm'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => togglePdfComponent(aid)}
+                      className="rounded accent-navy"
+                    />
+                    <span>{label}</span>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
+                      <span aria-hidden>✓</span> marks entered
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+          )}
+          {pdfMessage && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{pdfMessage}</p>
+          )}
+        </div>
+      )}
+
       {mergedMarksheet && completedComponents.length > 0 && (
         <div className="mt-5">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -859,11 +957,11 @@ export default function ComponentAttainmentPanel({ refreshKey = 0, assignedCours
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-800">
-                    Student summary by component
+                    Detailed view (all selected components side by side)
                   </p>
                   <p className="mt-1 text-sm text-slate-600">
-                    {report.studentsWithMarks} student(s) · Reg. no, name, and overall result for
-                    each selected component
+                    {report.studentsWithMarks} student(s) · Question marks, CO/PO per component,
+                    combined overall, and class averages
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -874,21 +972,6 @@ export default function ComponentAttainmentPanel({ refreshKey = 0, assignedCours
                     className="rounded-full border border-navy bg-white px-4 py-2 text-xs font-semibold text-navy hover:bg-navy/5 disabled:opacity-60"
                   >
                     {submitting ? 'Submitting…' : 'Submit to HOD'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDownloadPdf}
-                    disabled={!summaryExport}
-                    className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                  >
-                    Download PDF
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => exportMultiComponentReportExcel(mergedMarksheet, report)}
-                    className="rounded-full bg-navy px-4 py-2 text-xs font-semibold text-white hover:bg-navy-dark"
-                  >
-                    Download Excel
                   </button>
                 </div>
               </div>
@@ -905,17 +988,6 @@ export default function ComponentAttainmentPanel({ refreshKey = 0, assignedCours
                   {submitMessage}
                 </p>
               )}
-
-              <ComponentSummaryTable summaryExport={summaryExport} />
-
-              <div className="mb-4">
-                <p className="text-sm font-semibold text-slate-800">
-                  Detailed view (all selected components side by side)
-                </p>
-                <p className="mt-1 text-sm text-slate-600">
-                  Question marks, CO/PO per component, combined overall, and class averages
-                </p>
-              </div>
 
               <ExcelConsolidatedTable report={report} />
             </>

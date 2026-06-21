@@ -62,7 +62,7 @@ function HeroPanel() {
 }
 
 export default function LoginPage() {
-  const { login, user, loading } = useAuth()
+  const { login, user, loading, getDashboardPath } = useAuth()
   const navigate = useNavigate()
 
   const [email, setEmail] = useState('')
@@ -72,12 +72,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false)
 
   if (!loading && user) {
-    const paths = {
-      admin: '/admin/dashboard',
-      hod: '/hod/dashboard',
-      faculty: '/faculty/dashboard',
-    }
-    return <Navigate to={paths[user.role] || '/login'} replace />
+    return <Navigate to={getDashboardPath(user.role)} replace />
   }
 
   const handleSubmit = async (e) => {
@@ -89,7 +84,7 @@ export default function LoginPage() {
       const redirectPath = await login(email.trim(), password)
       navigate(redirectPath)
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed. Please try again.')
+      setError(err.response?.data?.message || err.message || 'Login failed. Please try again.')
     } finally {
       setSubmitting(false)
     }
@@ -104,7 +99,7 @@ export default function LoginPage() {
         <div className="mx-auto w-full max-w-md">
           <h1 className="text-3xl font-bold text-slate-900">Login</h1>
           <p className="mt-2 text-sm text-slate-500">
-            Enter your email and password to access the CO PO Management Portal
+            Sign in with your email and password (Admin, HOD, or Faculty)
           </p>
 
           {error && (
@@ -175,10 +170,9 @@ export default function LoginPage() {
           </form>
 
           <div className="mt-10 rounded-xl border border-slate-100 bg-slate-50 p-4 text-xs text-slate-500">
-            <p className="font-medium text-slate-600">Login credentials</p>
+            <p className="font-medium text-slate-600">Sign in</p>
             <p className="mt-1.5">Admin: admin@kcgcollege.edu / Admin@123</p>
-            <p className="mt-1">HOD (Mech): mechhod@gmail.com / mechhod</p>
-            <p className="mt-1">Faculty (Mech): mechstaff1@gmail.com / mechstaff1</p>
+            <p className="mt-1">HOD / Faculty: use the email and password set by admin</p>
             <p className="mt-2 text-slate-400">You can also use your username instead of email.</p>
           </div>
         </div>

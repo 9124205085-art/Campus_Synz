@@ -3,7 +3,7 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from models import Department, User
 from utils.decorators import role_required
-from utils.department_service import get_department_dashboard_data
+from utils.department_service import _hod_stats_from_dept_data, get_department_dashboard_data
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -14,10 +14,19 @@ dashboard_bp = Blueprint("dashboard", __name__)
 def admin_dashboard():
     from models import Course
 
+    total_users = User.query.count()
+    active_users = User.query.filter_by(is_active=True).count()
+    inactive_users = User.query.filter_by(is_active=False).count()
+    total_admins = User.query.filter_by(role="admin").count()
+
     return jsonify(
         {
             "message": "Welcome to the Admin Dashboard",
             "stats": {
+                "total_users": total_users,
+                "active_users": active_users,
+                "inactive_users": inactive_users,
+                "total_admins": total_admins,
                 "total_hods": User.query.filter_by(role="hod").count(),
                 "total_faculty": User.query.filter_by(role="faculty").count(),
                 "total_courses": Course.query.count(),
@@ -41,15 +50,12 @@ def hod_dashboard():
             "department": dept_data["department"],
             "department_detail": dept_data["department_detail"],
             "department_connected": dept_data["connected"],
-            "stats": {
-                "faculty_count": len(dept_data.get("faculty_with_courses") or dept_data["staff"]),
-                "courses_count": len(dept_data["courses"]),
-                "assignments_count": len(dept_data["assignments"]),
-            },
+            "stats": _hod_stats_from_dept_data(dept_data),
             "staff": dept_data["staff"],
             "faculty_with_courses": dept_data.get("faculty_with_courses", []),
             "courses": dept_data["courses"],
             "assignments": dept_data["assignments"],
+            "year_settings": dept_data.get("year_settings", []),
         }
     ), 200
 

@@ -6,6 +6,16 @@ import { hodAPI } from '../../services/api'
 
 const YEARS = [1, 2, 3, 4]
 
+function classCountForYear(checklist, year) {
+  const y = parseInt(year, 10)
+  if (!y) return 1
+  const setting = (checklist?.year_settings || []).find((s) => s.year === y)
+  if (setting?.class_count != null) return Math.max(1, setting.class_count)
+  const courses = checklist?.years?.find((node) => node.year === y)?.courses || []
+  const fromCourses = Math.max(0, ...courses.map((c) => c.class_number || 1))
+  return Math.max(1, fromCourses)
+}
+
 const COMPONENT_PRESETS = [
   { id: 'ca1', label: 'Continuous Assessment 1' },
   { id: 'ca2', label: 'Continuous Assessment 2' },
@@ -48,6 +58,7 @@ export default function HodChecklistPanel({ onMessage, onError, refreshKey = 0 }
   const [initialLoading, setInitialLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [activeYear, setActiveYear] = useState(1)
+  const [activeClass, setActiveClass] = useState(1)
   const [assignTarget, setAssignTarget] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [removingId, setRemovingId] = useState(null)
@@ -92,6 +103,26 @@ export default function HodChecklistPanel({ onMessage, onError, refreshKey = 0 }
     if (!checklist?.years?.length) return { year: activeYear, courses: [] }
     return checklist.years.find((y) => y.year === activeYear) || { year: activeYear, courses: [] }
   }, [checklist, activeYear])
+
+  const classCount = useMemo(
+    () => classCountForYear(checklist, activeYear),
+    [checklist, activeYear],
+  )
+
+  const classOptions = useMemo(
+    () => Array.from({ length: classCount }, (_, i) => i + 1),
+    [classCount],
+  )
+
+  useEffect(() => {
+    setActiveClass(1)
+  }, [activeYear])
+
+  useEffect(() => {
+    if (activeClass > classCount) {
+      setActiveClass(1)
+    }
+  }, [activeClass, classCount])
 
   const handleAssignComponent = async (e) => {
     e.preventDefault()
@@ -143,11 +174,15 @@ export default function HodChecklistPanel({ onMessage, onError, refreshKey = 0 }
     pending: 0,
   }
   const courses = yearNode?.courses || []
+  const classCourses = useMemo(
+    () => courses.filter((c) => (c.class_number || 1) === activeClass),
+    [courses, activeClass],
+  )
 
   const yearSemester = useMemo(() => {
-    const sems = [...new Set(courses.map((c) => c.semester).filter((s) => s != null))]
+    const sems = [...new Set(classCourses.map((c) => c.semester).filter((s) => s != null))]
     return sems.length === 1 ? sems[0] : null
-  }, [courses])
+  }, [classCourses])
 
   return (
     <section className="mb-8 rounded-2xl bg-white p-6 shadow-md">
@@ -208,40 +243,87 @@ export default function HodChecklistPanel({ onMessage, onError, refreshKey = 0 }
                 mode: 'year',
                 year: activeYear,
                 semester: yearSemester,
+                classNumber: activeClass,
               })
             }
             className="ml-auto rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-violet-700"
           >
             CO / PO Attainment — Year {activeYear}
             {yearSemester != null ? ` · Sem ${yearSemester}` : ''}
+            {classCount > 1 ? ` · Class ${activeClass}` : ''}
           </button>
         )}
       </div>
+
+      {classCount > 1 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Class — Year {activeYear}
+          </span>
+          {classOptions.map((cls) => {
+            const countInClass = courses.filter((c) => (c.class_number || 1) === cls).length
+            return (
+              <button
+                key={cls}
+                type="button"
+                onClick={() => setActiveClass(cls)}
+                className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                  activeClass === cls
+                    ? 'bg-teal-700 text-white'
+                    : 'bg-teal-50 text-teal-800 ring-1 ring-teal-200 hover:bg-teal-100'
+                }`}
+              >
+                Class {cls}
+                {countInClass > 0 ? (
+                  <span className="ml-1.5 text-xs font-normal opacity-80">
+                    ({countInClass} course{countInClass === 1 ? '' : 's'})
+                  </span>
+                ) : null}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {initialLoading && !checklist ? (
         <p className="rounded-lg bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
           Loading checklist…
         </p>
-      ) : courses.length === 0 ? (
+      ) : classCourses.length === 0 ? (
         <p className="rounded-lg bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-          No courses assigned for Year {activeYear}. Use <strong>+ Assign Course</strong> above to
-          add a course and faculty — it will appear here automatically.
+          {courses.length === 0 ? (
+            <>
+              No courses assigned for Year {activeYear}. Use <strong>+ Assign Course</strong> above
+              to add a course and faculty — it will appear here automatically.
+            </>
+          ) : (
+            <>
+              No courses assigned for Year {activeYear} · Class {activeClass}. Assign faculty to
+              this class under <strong>Course Assignments</strong>.
+            </>
+          )}
         </p>
       ) : (
         <div className={`space-y-4 ${refreshing ? 'opacity-70' : ''}`}>
-          {courses.map((course) => (
+          {classCourses.map((course) => (
             <div
               key={course.assignment_id}
               className="overflow-hidden rounded-xl border border-slate-200"
             >
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
                 <div>
-                  <p className="font-semibold text-navy">
-                    {course.course_code}
-                    <span className="ml-2 font-normal text-slate-600">{course.course_name}</span>
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold text-navy">
+                      {course.course_code}
+                      <span className="ml-2 font-normal text-slate-600">{course.course_name}</span>
+                    </p>
+                    <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-semibold text-teal-800">
+                      {course.class_label || `Class ${course.class_number || 1}`}
+                    </span>
+                  </div>
                   <p className="mt-0.5 text-xs text-slate-500">
-                    Faculty: {course.faculty_name || '—'} · Sem {course.semester ?? '—'}
+                    Faculty: {course.faculty_name || '—'} · Year {course.year ?? activeYear} · Sem{' '}
+                    {course.semester ?? '—'}
                     {course.regulation ? ` · ${course.regulation}` : ''}
                   </p>
                 </div>
@@ -334,7 +416,8 @@ export default function HodChecklistPanel({ onMessage, onError, refreshKey = 0 }
             <h3 className="text-lg font-bold text-slate-800">Assign component</h3>
             <p className="mt-1 text-sm text-slate-500">
               {assignTarget.course_code} — {assignTarget.course_name} · Year {assignTarget.year} ·
-              Sem {assignTarget.semester ?? '—'} · {assignTarget.faculty_name}
+              {assignTarget.class_label || `Class ${assignTarget.class_number || 1}`} · Sem{' '}
+              {assignTarget.semester ?? '—'} · {assignTarget.faculty_name}
             </p>
             <form onSubmit={handleAssignComponent} className="mt-4 space-y-4">
               <SelectField

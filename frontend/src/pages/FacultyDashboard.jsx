@@ -138,6 +138,7 @@ export default function FacultyDashboard() {
   const defaultRosterCourse = assignedCourses[0]
   const defaultRosterYear = defaultRosterCourse?.year
   const defaultRosterSemester = defaultRosterCourse?.semester ?? undefined
+  const defaultRosterClass = defaultRosterCourse?.class_number ?? undefined
 
   return (
     <FacultyShell
@@ -224,6 +225,7 @@ export default function FacultyDashboard() {
                   <th className="pb-2 pr-4">Code</th>
                   <th className="pb-2 pr-4">Course</th>
                   <th className="pb-2 pr-4">Year</th>
+                  <th className="pb-2 pr-4">Class</th>
                   <th className="pb-2 pr-4">Regulation</th>
                   <th className="pb-2">Action</th>
                 </tr>
@@ -234,6 +236,9 @@ export default function FacultyDashboard() {
                     <td className="py-2 pr-4 font-medium text-navy">{c.course_code}</td>
                     <td className="py-2 pr-4">{c.name}</td>
                     <td className="py-2 pr-4">Year {c.year || '—'}</td>
+                    <td className="py-2 pr-4 font-medium text-navy">
+                      {c.class_label || (c.class_number ? `Class ${c.class_number}` : '—')}
+                    </td>
                     <td className="py-2 pr-4">{c.regulation}</td>
                     <td className="py-2">
                       <button
@@ -273,7 +278,7 @@ export default function FacultyDashboard() {
             <StatCard
               label="Students"
               value={stats.roster_students_count ?? stats.students_count ?? 0}
-              sub="Saved class list — click to manage"
+              sub="Your class from HOD list — click to view"
               onClick={() => setShowRoster(true)}
               icon={
                 <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -382,6 +387,7 @@ export default function FacultyDashboard() {
         defaultBranch={defaultRosterBranch}
         defaultYear={defaultRosterYear}
         defaultSemester={defaultRosterSemester}
+        defaultClassNumber={defaultRosterClass}
         config={marksheetConfig}
       />
 

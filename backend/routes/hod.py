@@ -9,6 +9,7 @@ from utils.checklist_service import (
 )
 from utils.decorators import role_required
 from utils.department_service import (
+    _hod_stats_from_dept_data,
     get_department_dashboard_data,
     hod_can_access_submission,
     marksheets_submitted_to_department,
@@ -50,15 +51,12 @@ def hod_dashboard():
             "department": dept_data["department"],
             "department_detail": dept_data["department_detail"],
             "department_connected": dept_data["connected"],
-            "stats": {
-                "faculty_count": len(dept_data.get("faculty_with_courses") or dept_data["staff"]),
-                "courses_count": len(dept_data["courses"]),
-                "assignments_count": len(dept_data["assignments"]),
-            },
+            "stats": _hod_stats_from_dept_data(dept_data),
             "staff": dept_data["staff"],
             "faculty_with_courses": dept_data.get("faculty_with_courses", []),
             "courses": dept_data["courses"],
             "assignments": dept_data["assignments"],
+            "year_settings": dept_data.get("year_settings", []),
         }
     ), 200
 
@@ -184,10 +182,12 @@ def add_course_with_assignment():
         year = int(data.get("year") or 0)
         faculty_id = int(data.get("faculty_id") or 0)
         semester = int(data.get("semester") or 0) or None
+        class_number = int(data.get("class_number") or 0)
     except (TypeError, ValueError):
         year = 0
         faculty_id = 0
         semester = None
+        class_number = 0
 
     errors = []
     if not course_code:
@@ -204,6 +204,15 @@ def add_course_with_assignment():
             errors.append(err)
     if not faculty_id:
         errors.append("Faculty is required.")
+    if class_number < 1:
+        errors.append("Class is required.")
+
+    from utils.department_service import get_department_year_class_counts
+
+    if year in (1, 2, 3, 4) and class_number >= 1:
+        max_class = get_department_year_class_counts(user.department_id).get(year, 1)
+        if class_number > max_class:
+            errors.append(f"Class must be between 1 and {max_class} for year {year}.")
 
     faculty = User.query.filter_by(
         id=faculty_id, role="faculty", department_id=user.department_id, is_active=True
@@ -233,11 +242,13 @@ def add_course_with_assignment():
         db.session.flush()
 
     existing = CourseAssignment.query.filter_by(
-        course_id=course.id, faculty_id=faculty_id, year=year
+        course_id=course.id, faculty_id=faculty_id, year=year, class_number=class_number
     ).first()
     if existing:
         return jsonify(
-            {"message": "This faculty is already assigned to this course for that year."}
+            {
+                "message": "This faculty is already assigned to this course for that year and class."
+            }
         ), 409
 
     assignment = CourseAssignment(
@@ -245,6 +256,7 @@ def add_course_with_assignment():
         faculty_id=faculty_id,
         year=year,
         semester=semester,
+        class_number=class_number,
     )
     db.session.add(assignment)
     db.session.commit()
@@ -420,6 +432,20 @@ def add_checklist_item():
         created_by=user.id,
     )
     db.session.add(item)
+    db.session.flush()
+
+    if assignment.faculty_id:
+        from utils.notification_service import notify_faculty_checklist_assignment
+
+        notification = notify_faculty_checklist_assignment(
+            faculty_id=assignment.faculty_id,
+            hod_user=user,
+            checklist_item=item,
+            assignment=assignment,
+        )
+        if notification:
+            db.session.add(notification)
+
     db.session.commit()
 
     from utils.checklist_service import collect_component_submissions, item_with_status
@@ -450,6 +476,222 @@ def delete_checklist_item(item_id):
     db.session.delete(item)
     db.session.commit()
     return jsonify({"message": "Checklist item removed."}), 200
+
+
+@hod_bp.route("/classes", methods=["GET"])
+@jwt_required()
+@role_required("hod")
+def hod_list_classes():
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"classes": []}), 200
+    from utils.department_service import list_department_classes
+
+    return jsonify({"classes": list_department_classes(user.department_id)}), 200
+
+
+@hod_bp.route("/students", methods=["GET"])
+@jwt_required()
+@role_required("hod")
+def hod_list_students():
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"students": []}), 200
+    from utils.department_service import faculty_names_for_department_year, list_department_students
+
+    year = request.args.get("year")
+    students = list_department_students(user.department_id, year=year)
+    year_faculty = faculty_names_for_department_year(user.department_id, year)
+    return jsonify(
+        {
+            "students": students,
+            "year_faculty": year_faculty,
+        }
+    ), 200
+
+
+@hod_bp.route("/students", methods=["POST"])
+@jwt_required()
+@role_required("hod")
+def hod_add_student():
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"message": "Department not linked."}), 400
+
+    from models import Student
+
+    data = request.get_json(silent=True) or {}
+    register_number = (data.get("register_number") or "").strip()
+    full_name = (data.get("full_name") or data.get("name") or "").strip()
+    branch = (data.get("branch") or "Bachelor of Technology").strip()
+
+    try:
+        year = int(data.get("year") or 0)
+        semester = int(data.get("semester") or 1)
+    except (TypeError, ValueError):
+        return jsonify({"message": "Valid year and semester are required."}), 400
+
+    errors = []
+    if not register_number:
+        errors.append("Register number is required.")
+    if not full_name:
+        errors.append("Student name is required.")
+    if year not in (1, 2, 3, 4):
+        errors.append("Year must be between 1 and 4.")
+    if errors:
+        return jsonify({"message": " ".join(errors), "errors": errors}), 400
+
+    if Student.query.filter_by(register_number=register_number).first():
+        return jsonify({"message": "Register number already exists."}), 409
+
+    dept = user.department_rel
+    student = Student(
+        register_number=register_number,
+        full_name=full_name,
+        branch=branch,
+        department=dept.name if dept else "",
+        year=year,
+        semester=semester,
+    )
+    db.session.add(student)
+    db.session.commit()
+    return jsonify({"message": "Student added.", "student": student.to_dict()}), 201
+
+
+@hod_bp.route("/students/<int:student_id>", methods=["PUT"])
+@jwt_required()
+@role_required("hod")
+def hod_update_student(student_id):
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"message": "Department not linked."}), 400
+
+    from models import Student
+
+    student = Student.query.get(student_id)
+    if not student:
+        return jsonify({"message": "Student not found."}), 404
+
+    dept = user.department_rel
+    if not dept or student.department.lower() != dept.name.lower():
+        return jsonify({"message": "Student not in your department."}), 403
+
+    data = request.get_json(silent=True) or {}
+    register_number = (data.get("register_number") or student.register_number).strip()
+    full_name = (data.get("full_name") or data.get("name") or student.full_name).strip()
+    branch = (data.get("branch") or student.branch).strip()
+
+    try:
+        year = int(data.get("year") or student.year)
+        semester = int(data.get("semester") or student.semester)
+    except (TypeError, ValueError):
+        return jsonify({"message": "Valid year and semester are required."}), 400
+
+    if not register_number or not full_name:
+        return jsonify({"message": "Register number and name are required."}), 400
+    if year not in (1, 2, 3, 4):
+        return jsonify({"message": "Year must be between 1 and 4."}), 400
+
+    clash = Student.query.filter(
+        Student.register_number == register_number, Student.id != student_id
+    ).first()
+    if clash:
+        return jsonify({"message": "Register number already exists."}), 409
+
+    student.register_number = register_number
+    student.full_name = full_name
+    student.branch = branch
+    student.year = year
+    student.semester = semester
+    db.session.commit()
+    return jsonify({"message": "Student updated.", "student": student.to_dict()}), 200
+
+
+@hod_bp.route("/students/<int:student_id>", methods=["DELETE"])
+@jwt_required()
+@role_required("hod")
+def hod_delete_student(student_id):
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"message": "Department not linked."}), 400
+
+    from models import Student
+
+    student = Student.query.get(student_id)
+    if not student:
+        return jsonify({"message": "Student not found."}), 404
+
+    dept = user.department_rel
+    if not dept or student.department.lower() != dept.name.lower():
+        return jsonify({"message": "Student not in your department."}), 403
+
+    db.session.delete(student)
+    db.session.commit()
+    return jsonify({"message": "Student deleted."}), 200
+
+
+@hod_bp.route("/year-settings", methods=["GET"])
+@jwt_required()
+@role_required("hod")
+def hod_get_year_settings():
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"year_settings": []}), 200
+    from utils.department_service import (
+        department_class_student_stats,
+        get_department_year_settings,
+    )
+
+    cs = department_class_student_stats(user.department_id)
+    return jsonify(
+        {
+            "year_settings": get_department_year_settings(
+                user.department_id, cs.get("students_by_year")
+            ),
+        }
+    ), 200
+
+
+@hod_bp.route("/year-settings/<int:year>", methods=["PUT"])
+@jwt_required()
+@role_required("hod")
+def hod_update_year_setting(year):
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"message": "Department not linked."}), 400
+
+    from utils.department_service import (
+        department_class_student_stats,
+        get_department_year_settings,
+        set_department_year_setting,
+    )
+
+    data = request.get_json(silent=True) or {}
+    row, errors = set_department_year_setting(
+        user.department_id,
+        year,
+        class_count=data.get("class_count"),
+        student_count=data.get("student_count"),
+    )
+    if errors:
+        return jsonify({"message": " ".join(errors), "errors": errors}), 400
+
+    cs = department_class_student_stats(user.department_id)
+    settings = get_department_year_settings(user.department_id, cs.get("students_by_year"))
+    setting = next((s for s in settings if s["year"] == year), None)
+    parts = []
+    if data.get("student_count") is not None:
+        parts.append(f"{setting['student_count']} student(s)")
+    if data.get("class_count") is not None:
+        parts.append(f"{setting['class_count']} class(es)")
+    summary = " and ".join(parts) if parts else "Settings updated"
+    return jsonify(
+        {
+            "message": f"Year {year}: {summary}.",
+            "setting": setting or row.to_dict(),
+            "year_settings": settings,
+        }
+    ), 200
 
 
 @hod_bp.route("/co-attainment/course", methods=["GET"])

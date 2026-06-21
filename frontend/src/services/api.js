@@ -60,6 +60,13 @@ export const hodAPI = {
     api.get('/hod/co-attainment/year', {
       params: semester != null ? { year, semester } : { year },
     }),
+  listClasses: () => api.get('/hod/classes'),
+  listStudents: (year) => api.get('/hod/students', { params: year ? { year } : {} }),
+  addStudent: (data) => api.post('/hod/students', data),
+  updateStudent: (id, data) => api.put(`/hod/students/${id}`, data),
+  deleteStudent: (id) => api.delete(`/hod/students/${id}`),
+  getYearSettings: () => api.get('/hod/year-settings'),
+  updateYearSetting: (year, data) => api.put(`/hod/year-settings/${year}`, data),
 }
 
 export const facultyAPI = {
@@ -76,9 +83,19 @@ export const facultyAPI = {
   deleteMarksheet: (id) => api.delete(`/faculty/marksheets/${id}`),
   submitCoAttainment: (id, data) => api.post(`/faculty/marksheets/${id}/submit-co-attainment`, data),
   submitComponentReport: (data) => api.post('/faculty/marksheets/submit-component-report', data),
+  listNotifications: () => api.get('/faculty/notifications'),
+  markNotificationRead: (id) => api.patch(`/faculty/notifications/${id}/read`),
+  markAllNotificationsRead: () => api.post('/faculty/notifications/read-all'),
 }
 
 export const adminAPI = {
+  listUsers: (params) => api.get('/admin/users', { params }),
+  getUser: (id) => api.get(`/admin/users/${id}`),
+  setUserStatus: (id, isActive) =>
+    api.patch(`/admin/users/${id}/status`, { is_active: isActive }),
+  resetUserPassword: (id, password) =>
+    api.post(`/admin/users/${id}/reset-password`, { password }),
+
   listDepartments: () => api.get('/admin/departments'),
   getDepartment: (id) => api.get(`/admin/departments/${id}`),
   addDepartment: (data) => api.post('/admin/departments', data),

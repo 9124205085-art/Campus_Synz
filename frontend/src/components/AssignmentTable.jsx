@@ -12,6 +12,7 @@ export default function AssignmentTable({ assignments, onRemove, removingId }) {
             <th className="py-3 pr-4 font-medium">Course Name</th>
             <th className="py-3 pr-4 font-medium">Regulation</th>
             <th className="py-3 pr-4 font-medium">Year</th>
+            <th className="py-3 pr-4 font-medium">Class</th>
             <th className="py-3 pr-4 font-medium">Semester</th>
             <th className="py-3 pr-4 font-medium">Faculty</th>
             <th className="py-3 font-medium">Action</th>
@@ -24,6 +25,7 @@ export default function AssignmentTable({ assignments, onRemove, removingId }) {
               <td className="py-3 pr-4">{row.course_name}</td>
               <td className="py-3 pr-4">{row.regulation}</td>
               <td className="py-3 pr-4">Year {row.year}</td>
+              <td className="py-3 pr-4">{row.class_label || `Class ${row.class_number || 1}`}</td>
               <td className="py-3 pr-4">{row.semester ? `Sem ${row.semester}` : '—'}</td>
               <td className="py-3 pr-4 text-slate-600">{row.faculty_name || '—'}</td>
               <td className="py-3">

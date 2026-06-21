@@ -1,72 +1,44 @@
 import { useCallback, useEffect, useState } from 'react'
 import AdminDetailPanel from '../components/AdminDetailPanel'
+import AdminStatCard from '../components/admin/AdminStatCard'
+import AdminStatDetailsModal from '../components/admin/AdminStatDetailsModal'
+import AdminUserManagement from '../components/admin/AdminUserManagement'
 import DashboardLayout from '../components/DashboardLayout'
-import StatCard from '../components/StatCard'
 import { adminAPI, dashboardAPI } from '../services/api'
 
-const SECTIONS = [
-  { id: 'hods', label: 'HODs', type: 'HOD' },
-  { id: 'faculty', label: 'Faculty', type: 'Faculty' },
-  { id: 'courses', label: 'Courses', type: 'Course' },
-  { id: 'departments', label: 'Departments', type: 'Department' },
-]
-
-const ADD_LABELS = {
-  hods: 'Add HOD',
-  faculty: 'Add Faculty',
-  courses: 'Add Course',
-  departments: 'Add Department',
+function userTypeForRole(role) {
+  if (role === 'faculty') return 'Faculty'
+  if (role === 'admin') return 'Admin'
+  return 'HOD'
 }
 
-function itemLabel(section, item) {
-  if (section === 'departments') return item.name
-  if (section === 'courses') return `${item.course_code} — ${item.name}`
-  return item.full_name || item.name
-}
-
-function formFromItem(section, item) {
-  const base = { ...item, password: '' }
-  if (section !== 'departments') {
-    base.department_id = item.department_id || ''
-    base.name = item.full_name || item.name
+function formFromUser(user) {
+  return {
+    ...user,
+    name: user.full_name,
+    password: '',
+    department_id: user.department_id || '',
   }
-  return base
 }
 
 export default function AdminDashboard() {
-  const [activeSection, setActiveSection] = useState('hods')
   const [stats, setStats] = useState(null)
-  const [items, setItems] = useState([])
+  const [refreshKey, setRefreshKey] = useState(0)
   const [selected, setSelected] = useState(null)
   const [panelMode, setPanelMode] = useState(null)
+  const [addRole, setAddRole] = useState('hod')
   const [form, setForm] = useState({})
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-
-  const sectionMeta = SECTIONS.find((s) => s.id === activeSection)
-
-  const loadItems = useCallback(async () => {
-    try {
-      let res
-      if (activeSection === 'hods') res = await adminAPI.listHods()
-      else if (activeSection === 'faculty') res = await adminAPI.listFaculty()
-      else if (activeSection === 'courses') res = await adminAPI.listCourses()
-      else res = await adminAPI.listDepartments()
-
-      const key =
-        activeSection === 'hods'
-          ? 'hods'
-          : activeSection === 'faculty'
-            ? 'faculty'
-            : activeSection === 'courses'
-              ? 'courses'
-              : 'departments'
-      setItems(res.data[key] || [])
-    } catch (err) {
-      setError(err.response?.data?.message || 'Failed to load data.')
-    }
-  }, [activeSection])
+  const [statDetailType, setStatDetailType] = useState(null)
+  const [deptPanelMode, setDeptPanelMode] = useState(null)
+  const [selectedDept, setSelectedDept] = useState(null)
+  const [deptForm, setDeptForm] = useState({})
+  const [coursePanelMode, setCoursePanelMode] = useState(null)
+  const [selectedCourse, setSelectedCourse] = useState(null)
+  const [courseForm, setCourseForm] = useState({})
+  const [statModalKey, setStatModalKey] = useState(0)
 
   const loadStats = useCallback(async () => {
     const res = await dashboardAPI.admin()
@@ -74,78 +46,282 @@ export default function AdminDashboard() {
   }, [])
 
   useEffect(() => {
-    setSelected(null)
-    setPanelMode(null)
-    setError('')
-    setMessage('')
-    loadItems()
     loadStats()
-  }, [activeSection, loadItems, loadStats])
+  }, [loadStats, refreshKey])
 
-  const openAdd = () => {
+  const bumpRefresh = () => setRefreshKey((n) => n + 1)
+
+  const openAddUser = () => {
     setSelected(null)
     setPanelMode('add')
+    setAddRole('hod')
     setError('')
-    if (activeSection === 'departments') {
-      setForm({ name: '', code: '', degree: 'B.Tech', duration: '4', status: 'active' })
-    } else if (activeSection === 'hods') {
-      setForm({
-        employee_id: '',
-        name: '',
-        email: '',
-        mobile: '',
-        designation: 'hod',
-        is_active: true,
-        password: '',
-        department_id: '',
-        department: '',
-      })
-    } else if (activeSection === 'faculty') {
-      setForm({
-        employee_id: '',
-        name: '',
-        email: '',
-        mobile: '',
-        designation: 'faculty',
-        is_active: true,
-        password: '',
-        department_id: '',
-        department: '',
-      })
-    } else {
-      setForm({
-        course_code: '',
-        name: '',
-        regulation: '',
-        department_id: '',
-        department: '',
-      })
-    }
+    setForm({
+      employee_id: '',
+      name: '',
+      email: '',
+      mobile: '',
+      designation: 'hod',
+      is_active: true,
+      password: '',
+      department_id: '',
+      department: '',
+    })
   }
 
-  const openItem = (item) => {
-    setSelected(item)
+  const openViewUser = (user) => {
+    setStatDetailType(null)
+    setSelected(user)
     setPanelMode('view')
-    setForm(formFromItem(activeSection, item))
+    setForm(formFromUser(user))
+    setError('')
   }
 
-  const openEdit = (item) => {
-    setSelected(item)
-    setPanelMode('edit')
-    setForm(formFromItem(activeSection, item))
+  const closePanel = () => {
+    setPanelMode(null)
+    setSelected(null)
+    setError('')
   }
 
-  const handlePanelAction = async (action) => {
-    if (action === 'edit') {
-      setPanelMode('edit')
+  const emptyDeptForm = () => ({
+    name: '',
+    code: '',
+    degree: 'B.Tech',
+    duration: '4',
+    status: 'active',
+  })
+
+  const openAddDepartment = () => {
+    setStatDetailType(null)
+    setSelectedDept(null)
+    setDeptPanelMode('add')
+    setDeptForm(emptyDeptForm())
+    setError('')
+  }
+
+  const openViewDepartment = (dept) => {
+    setStatDetailType(null)
+    setSelectedDept(dept)
+    setDeptPanelMode('view')
+    setDeptForm({
+      ...dept,
+      duration: String(dept.duration ?? 4),
+    })
+    setError('')
+  }
+
+  const closeDeptPanel = () => {
+    setDeptPanelMode(null)
+    setSelectedDept(null)
+    setError('')
+  }
+
+  const handleSaveDepartment = async () => {
+    setError('')
+    setMessage('')
+    setSubmitting(true)
+
+    try {
+      const payload = {
+        name: (deptForm.name || '').trim(),
+        code: (deptForm.code || '').trim(),
+        degree: deptForm.degree || 'B.Tech',
+        duration: parseInt(deptForm.duration, 10) || 4,
+        status: deptForm.status || 'active',
+      }
+
+      if (!payload.name || !payload.code) {
+        setError('Department name and code are required.')
+        setSubmitting(false)
+        return
+      }
+
+      if (deptPanelMode === 'add') {
+        await adminAPI.addDepartment(payload)
+        setMessage('Department added successfully.')
+      } else {
+        await adminAPI.updateDepartment(selectedDept.id, payload)
+        setMessage('Department updated successfully.')
+      }
+
+      closeDeptPanel()
+      bumpRefresh()
+      await loadStats()
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not save department.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleDeleteDepartment = async (dept) => {
+    const target = dept || selectedDept
+    if (!target?.id) return
+    if (
+      !window.confirm(
+        `Delete department "${target.name}"? All HODs, faculty, and courses in this department will also be removed.`,
+      )
+    ) {
       return
     }
 
-    if (action === 'delete') {
-      await handleDelete(selected)
+    setSubmitting(true)
+    setError('')
+    try {
+      await adminAPI.deleteDepartment(target.id)
+      setMessage('Department deleted successfully.')
+      closeDeptPanel()
+      setStatModalKey((k) => k + 1)
+      bumpRefresh()
+      await loadStats()
+    } catch (err) {
+      setError(err.response?.data?.message || 'Delete failed.')
+      throw err
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const emptyCourseForm = () => ({
+    course_code: '',
+    name: '',
+    regulation: '',
+    department_id: '',
+    department: '',
+  })
+
+  const openAddCourse = () => {
+    setStatDetailType(null)
+    setSelectedCourse(null)
+    setCoursePanelMode('add')
+    setCourseForm(emptyCourseForm())
+    setError('')
+  }
+
+  const openViewCourse = (course) => {
+    setStatDetailType(null)
+    setSelectedCourse(course)
+    setCoursePanelMode('view')
+    setCourseForm({
+      ...course,
+      department_id: course.department_id || '',
+    })
+    setError('')
+  }
+
+  const closeCoursePanel = () => {
+    setCoursePanelMode(null)
+    setSelectedCourse(null)
+    setError('')
+  }
+
+  const handleSaveCourse = async () => {
+    setError('')
+    setMessage('')
+    setSubmitting(true)
+
+    try {
+      const payload = {
+        course_code: (courseForm.course_code || '').trim(),
+        name: (courseForm.name || '').trim(),
+        regulation: (courseForm.regulation || '').trim(),
+        department_id: courseForm.department_id ? Number(courseForm.department_id) : undefined,
+        department: courseForm.department,
+      }
+
+      if (!payload.course_code || !payload.name || !payload.regulation) {
+        setError('Course code, name, and regulation are required.')
+        setSubmitting(false)
+        return
+      }
+      if (!payload.department_id && !payload.department?.trim()) {
+        setError('Please select a department.')
+        setSubmitting(false)
+        return
+      }
+
+      if (coursePanelMode === 'add') {
+        await adminAPI.addCourse(payload)
+        setMessage('Course added successfully.')
+      } else {
+        await adminAPI.updateCourse(selectedCourse.id, payload)
+        setMessage('Course updated successfully.')
+      }
+
+      closeCoursePanel()
+      setStatModalKey((k) => k + 1)
+      bumpRefresh()
+      await loadStats()
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not save course.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleDeleteCourse = async (course) => {
+    const target = course || selectedCourse
+    if (!target?.id) return
+    if (!window.confirm(`Delete course "${target.course_code} — ${target.name}"? This cannot be undone.`)) {
       return
     }
 
+    setSubmitting(true)
+    setError('')
+    try {
+      await adminAPI.deleteCourse(target.id)
+      setMessage('Course deleted successfully.')
+      closeCoursePanel()
+      setStatModalKey((k) => k + 1)
+      bumpRefresh()
+      await loadStats()
+    } catch (err) {
+      setError(err.response?.data?.message || 'Delete failed.')
+      throw err
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleDeleteUser = async (user) => {
+    const target = user || selected
+    if (!target?.id) return
+    if (target.role === 'admin') {
+      setError('Admin accounts cannot be deleted.')
+      return
+    }
+    if (!window.confirm(`Delete ${target.full_name}? This cannot be undone.`)) return
+
+    setSubmitting(true)
+    setError('')
+    try {
+      if (target.role === 'hod') await adminAPI.deleteHod(target.id)
+      else if (target.role === 'faculty') await adminAPI.deleteFaculty(target.id)
+      else {
+        setError('This account cannot be deleted.')
+        setSubmitting(false)
+        return
+      }
+      setMessage('User deleted successfully.')
+      closePanel()
+      setStatModalKey((k) => k + 1)
+      bumpRefresh()
+      await loadStats()
+    } catch (err) {
+      setError(err.response?.data?.message || 'Delete failed.')
+      throw err
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleStatDelete = async (type, item) => {
+    if (type === 'department') await handleDeleteDepartment(item)
+    else if (type === 'course') await handleDeleteCourse(item)
+    else if (type === 'hod' || type === 'faculty') await handleDeleteUser({ ...item, role: type })
+  }
+
+  const handleSaveUser = async () => {
     setError('')
     setMessage('')
     setSubmitting(true)
@@ -154,42 +330,31 @@ export default function AdminDashboard() {
       const payload = { ...form }
       if (payload.name && !payload.full_name) payload.full_name = payload.name
 
-      if (['hods', 'faculty', 'courses'].includes(activeSection)) {
-        if (!payload.department_id && !payload.department?.trim()) {
-          setError('Please select a department from the dropdown.')
-          setSubmitting(false)
-          return
-        }
-        if (payload.department_id) {
-          payload.department_id = Number(payload.department_id)
-        }
+      if (!payload.department_id && !payload.department?.trim()) {
+        setError('Please select a department.')
+        setSubmitting(false)
+        return
+      }
+      if (payload.department_id) {
+        payload.department_id = Number(payload.department_id)
       }
 
-      if (activeSection === 'hods') {
+      const role = panelMode === 'add' ? addRole : selected?.role
+      if (role === 'hod') {
         if (panelMode === 'add') await adminAPI.addHod(payload)
         else await adminAPI.updateHod(selected.id, payload)
-      } else if (activeSection === 'faculty') {
+      } else if (role === 'faculty') {
         if (panelMode === 'add') await adminAPI.addFaculty(payload)
         else await adminAPI.updateFaculty(selected.id, payload)
-      } else if (activeSection === 'courses') {
-        if (panelMode === 'add') await adminAPI.addCourse(payload)
-        else await adminAPI.updateCourse(selected.id, payload)
-      } else if (activeSection === 'departments') {
-        if (panelMode === 'add') await adminAPI.addDepartment(payload)
-        else
-          await adminAPI.updateDepartment(selected.id, {
-            name: payload.name,
-            code: payload.code,
-            degree: payload.degree,
-            duration: parseInt(payload.duration, 10),
-            status: payload.status,
-          })
+      } else {
+        setError('Only HOD and Faculty accounts can be added here.')
+        setSubmitting(false)
+        return
       }
 
-      setMessage(panelMode === 'add' ? 'Added successfully.' : 'Updated successfully.')
-      setPanelMode(null)
-      setSelected(null)
-      await loadItems()
+      setMessage(panelMode === 'add' ? 'User added successfully.' : 'User updated successfully.')
+      closePanel()
+      bumpRefresh()
       await loadStats()
     } catch (err) {
       setError(err.response?.data?.message || 'Operation failed.')
@@ -198,210 +363,241 @@ export default function AdminDashboard() {
     }
   }
 
-  const handleDelete = async (item) => {
-    if (!item?.id) return
-    if (
-      !window.confirm(
-        `Delete "${itemLabel(activeSection, item)}"?\n\nThis action cannot be undone.`,
-      )
-    ) {
-      return
-    }
-
-    setError('')
-    setMessage('')
-    setSubmitting(true)
-
-    try {
-      if (activeSection === 'hods') await adminAPI.deleteHod(item.id)
-      else if (activeSection === 'faculty') await adminAPI.deleteFaculty(item.id)
-      else if (activeSection === 'courses') await adminAPI.deleteCourse(item.id)
-      else await adminAPI.deleteDepartment(item.id)
-
-      setMessage('Deleted successfully.')
-      setPanelMode(null)
-      setSelected(null)
-      await loadItems()
-      await loadStats()
-    } catch (err) {
-      setError(err.response?.data?.message || 'Delete failed.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
+  const panelType = selected ? userTypeForRole(selected.role) : addRole === 'faculty' ? 'Faculty' : 'HOD'
 
   return (
-    <DashboardLayout title="Admin Dashboard" showLogo>
-      {error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
-          {error}
+    <DashboardLayout title="Admin Dashboard" showLogo fullWidth>
+      <div className="mb-6 space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <AdminStatCard
+            label="Total Users"
+            value={stats?.total_users ?? '—'}
+            subtitle="All registered users"
+            icon="users"
+            iconBg="bg-blue-500"
+          />
+          <AdminStatCard
+            label="Active Users"
+            value={stats?.active_users ?? '—'}
+            subtitle="Active and verified users"
+            icon="active"
+            iconBg="bg-emerald-500"
+            subtitleClass="text-emerald-600"
+          />
+          <AdminStatCard
+            label="Inactive Users"
+            value={stats?.inactive_users ?? '—'}
+            subtitle="Inactive users"
+            icon="inactive"
+            iconBg="bg-amber-500"
+            subtitleClass="text-amber-600"
+          />
+          <AdminStatCard
+            label="Admins"
+            value={stats?.total_admins ?? '—'}
+            subtitle="System administrators"
+            icon="admin"
+            iconBg="bg-violet-500"
+            subtitleClass="text-violet-600"
+          />
         </div>
-      )}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <AdminStatCard
+            label="HODs"
+            value={stats?.total_hods ?? '—'}
+            subtitle="Heads of department — click to view"
+            icon="hod"
+            iconBg="bg-slate-700"
+            onClick={() => setStatDetailType('hod')}
+          />
+          <AdminStatCard
+            label="Faculty"
+            value={stats?.total_faculty ?? '—'}
+            subtitle="Teaching staff accounts — click to view"
+            icon="faculty"
+            iconBg="bg-sky-600"
+            subtitleClass="text-sky-600"
+            onClick={() => setStatDetailType('faculty')}
+          />
+          <AdminStatCard
+            label="Departments"
+            value={stats?.departments ?? '—'}
+            subtitle="Registered departments — click to view"
+            icon="department"
+            iconBg="bg-teal-600"
+            subtitleClass="text-teal-600"
+            onClick={() => setStatDetailType('department')}
+          />
+          <AdminStatCard
+            label="Courses"
+            value={stats?.total_courses ?? '—'}
+            subtitle="Courses in the system — click to view"
+            icon="course"
+            iconBg="bg-indigo-600"
+            subtitleClass="text-indigo-600"
+            onClick={() => setStatDetailType('course')}
+          />
+        </div>
+      </div>
+
       {message && (
         <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-green-700">
           {message}
         </div>
       )}
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="HODs"
-          value={stats?.total_hods ?? '—'}
-          onClick={() => setActiveSection('hods')}
-        />
-        <StatCard
-          label="Faculty"
-          value={stats?.total_faculty ?? '—'}
-          accent="bg-blue-600"
-          onClick={() => setActiveSection('faculty')}
-        />
-        <StatCard
-          label="Courses"
-          value={stats?.total_courses ?? '—'}
-          accent="bg-emerald-600"
-          onClick={() => setActiveSection('courses')}
-        />
-        <StatCard
-          label="Departments"
-          value={stats?.departments ?? '—'}
-          accent="bg-amber-500"
-          onClick={() => setActiveSection('departments')}
-        />
-      </div>
-
-      <div className="mb-4 flex flex-wrap gap-2">
-        {SECTIONS.map((sec) => (
+      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-800">Setup</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Start by creating a department, then assign an HOD to that department.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-3">
           <button
-            key={sec.id}
             type="button"
-            onClick={() => setActiveSection(sec.id)}
-            className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-              activeSection === sec.id
-                ? 'bg-navy text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
+            onClick={openAddDepartment}
+            className="rounded-full bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700"
           >
-            {sec.label}
+            + Add Department
           </button>
-        ))}
-        <button
-          type="button"
-          onClick={openAdd}
-          className="ml-auto rounded-full border border-navy px-4 py-2 text-sm font-medium text-navy hover:bg-navy hover:text-white"
-        >
-          + {ADD_LABELS[activeSection] || 'Add New'}
-        </button>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section className="rounded-2xl bg-white p-6 shadow-md">
-          <h2 className="mb-1 text-lg font-semibold text-slate-800">{sectionMeta?.label}</h2>
-          <p className="mb-4 text-sm text-slate-500">
-            Click a row to view · Use Edit or Delete to update or remove
-          </p>
-          <ItemList
-            section={activeSection}
-            items={items}
-            onSelect={openItem}
-            onEdit={openEdit}
-            onDelete={handleDelete}
-            selectedId={selected?.id}
-          />
-        </section>
-
-        {panelMode && (
-          <AdminDetailPanel
-            type={sectionMeta?.type}
-            mode={panelMode}
-            form={form}
-            setForm={setForm}
-            submitting={submitting}
-            onSubmit={handlePanelAction}
-            onDelete={() => handleDelete(selected)}
-            onCancel={() => {
-              setPanelMode(null)
-              setSelected(null)
-            }}
-          />
-        )}
-      </div>
-    </DashboardLayout>
-  )
-}
-
-function ItemList({ section, items, onSelect, onEdit, onDelete, selectedId }) {
-  if (!items.length) {
-    return (
-      <p className="text-sm text-slate-500">
-        No records yet. Click &quot;Add&quot; above to create one.
-      </p>
-    )
-  }
-
-  return (
-    <ul className="max-h-[28rem] space-y-2 overflow-y-auto">
-      {items.map((item) => (
-        <li
-          key={item.id}
-          className={`flex overflow-hidden rounded-lg border transition ${
-            selectedId === item.id ? 'border-navy bg-slate-50' : 'border-slate-100'
-          }`}
-        >
           <button
             type="button"
-            onClick={() => onSelect(item)}
-            className="min-w-0 flex-1 p-4 text-left hover:bg-slate-50/80"
+            onClick={openAddUser}
+            className="rounded-full bg-navy px-5 py-2.5 text-sm font-semibold text-white hover:bg-navy-dark"
           >
-            {section === 'hods' || section === 'faculty' ? (
-              <>
-                <p className="font-medium text-slate-800">{item.full_name}</p>
-                <p className="text-sm text-slate-500">
-                  {item.employee_id} · {item.email}
-                </p>
-                <p className="text-xs text-slate-400">
-                  {item.department} · {item.is_active === false ? 'Inactive' : 'Active'}
-                </p>
-              </>
-            ) : section === 'courses' ? (
-              <>
-                <p className="font-medium text-navy">{item.course_code}</p>
-                <p className="text-sm text-slate-700">{item.name}</p>
-                <p className="text-xs text-slate-400">
-                  {item.regulation} · {item.department} · Staff:{' '}
-                  {item.staff?.map((s) => s.full_name).join(', ') || 'None'}
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="font-medium text-slate-800">{item.name}</p>
-                <p className="text-xs text-slate-400">
-                  {item.code} · {item.degree} · {item.duration}y · {item.status}
-                </p>
-                <p className="text-xs text-slate-400">
-                  HOD: {item.hod_count} · Faculty: {item.faculty_count} · Courses:{' '}
-                  {item.course_count}
-                </p>
-              </>
+            + Add HOD / Faculty
+          </button>
+        </div>
+      </div>
+
+      <AdminUserManagement
+        refreshKey={refreshKey}
+        onView={openViewUser}
+        onAddUser={openAddUser}
+        onDelete={handleDeleteUser}
+      />
+
+      {statDetailType && (
+        <AdminStatDetailsModal
+          key={statModalKey}
+          type={statDetailType}
+          onClose={() => setStatDetailType(null)}
+          onViewUser={statDetailType === 'hod' || statDetailType === 'faculty' ? openViewUser : undefined}
+          onViewDepartment={statDetailType === 'department' ? openViewDepartment : undefined}
+          onViewCourse={statDetailType === 'course' ? openViewCourse : undefined}
+          onAddDepartment={statDetailType === 'department' ? openAddDepartment : undefined}
+          onAddCourse={statDetailType === 'course' ? openAddCourse : undefined}
+          onDelete={handleStatDelete}
+        />
+      )}
+
+      {coursePanelMode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto">
+            {error && (
+              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+                {error}
+              </div>
             )}
-          </button>
-          <div className="flex shrink-0 flex-col justify-center gap-1 border-l border-slate-100 bg-white px-2 py-2">
-            <button
-              type="button"
-              onClick={() => onEdit(item)}
-              className="rounded-md px-3 py-1.5 text-xs font-semibold text-navy hover:bg-navy/10"
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              onClick={() => onDelete(item)}
-              className="rounded-md px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
-            >
-              Delete
-            </button>
+            <AdminDetailPanel
+              type="Course"
+              mode={coursePanelMode === 'add' ? 'add' : coursePanelMode}
+              form={courseForm}
+              setForm={setCourseForm}
+              submitting={submitting}
+              onSubmit={(action) => {
+                if (action === 'edit') setCoursePanelMode('edit')
+                else if (action === 'delete') handleDeleteCourse()
+                else handleSaveCourse()
+              }}
+              onDelete={() => handleDeleteCourse()}
+              onCancel={closeCoursePanel}
+            />
           </div>
-        </li>
-      ))}
-    </ul>
+        </div>
+      )}
+
+      {deptPanelMode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto">
+            {error && (
+              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+                {error}
+              </div>
+            )}
+            <AdminDetailPanel
+              type="Department"
+              mode={deptPanelMode === 'add' ? 'add' : deptPanelMode}
+              form={deptForm}
+              setForm={setDeptForm}
+              submitting={submitting}
+              onSubmit={(action) => {
+                if (action === 'edit') setDeptPanelMode('edit')
+                else if (action === 'delete') handleDeleteDepartment()
+                else handleSaveDepartment()
+              }}
+              onDelete={() => handleDeleteDepartment()}
+              onCancel={closeDeptPanel}
+            />
+          </div>
+        </div>
+      )}
+
+      {panelMode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto">
+            {panelMode === 'add' && (
+              <div className="mb-3 rounded-2xl bg-white p-4 shadow-md">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  User role
+                </p>
+                <div className="flex gap-2">
+                  {['hod', 'faculty'].map((role) => (
+                    <button
+                      key={role}
+                      type="button"
+                      onClick={() => {
+                        setAddRole(role)
+                        setForm((f) => ({
+                          ...f,
+                          designation: role,
+                        }))
+                      }}
+                      className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold capitalize ${
+                        addRole === role
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      }`}
+                    >
+                      {role === 'hod' ? 'HOD' : 'Faculty'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+                {error}
+              </div>
+            )}
+
+            <AdminDetailPanel
+              type={panelType}
+              mode={panelMode}
+              form={form}
+              setForm={setForm}
+              submitting={submitting}
+              onSubmit={(action) => {
+                if (action === 'edit') setPanelMode('edit')
+                else if (action === 'delete') handleDeleteUser()
+                else handleSaveUser()
+              }}
+              onDelete={() => handleDeleteUser()}
+              onCancel={closePanel}
+            />
+          </div>
+        </div>
+      )}
+    </DashboardLayout>
   )
 }

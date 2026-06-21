@@ -4,7 +4,7 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 from datetime import datetime
 
 from extensions import db
-from models import FacultyClassRoster, MarkSheet, User
+from models import FacultyClassRoster, MarkSheet, Notification, User
 from utils.decorators import role_required
 from utils.helpers import get_or_create_department, is_valid_department
 from utils.marksheet_constants import BRANCHES, CO_OPTIONS, DEPARTMENTS, SEMESTERS, YEARS, validate_year_semester
@@ -36,7 +36,14 @@ from utils.department_service import (
     marksheet_is_for_assigned_course,
     sync_marksheet_department,
 )
-from utils.roster_service import get_roster, roster_student_count, save_roster
+from utils.roster_service import (
+    get_roster,
+    roster_student_count,
+    roster_student_entries,
+    roster_students_for_faculty,
+    roster_summary_payload,
+    save_roster,
+)
 
 faculty_bp = Blueprint("faculty", __name__)
 
@@ -170,14 +177,8 @@ def get_student_roster():
     if errors:
         return jsonify({"message": " ".join(errors), "errors": errors}), 400
 
-    roster = get_roster(faculty_id, branch, department, year, semester)
-    return jsonify(
-        {
-            "roster": roster.to_dict() if roster else None,
-            "count": len(roster.students) if roster else 0,
-            "students": roster.students if roster else [],
-        }
-    ), 200
+    payload = roster_students_for_faculty(faculty_id, branch, department, year, semester)
+    return jsonify(payload), 200
 
 
 @faculty_bp.route("/student-roster", methods=["PUT"])
@@ -226,15 +227,7 @@ def upsert_student_roster():
 @role_required("faculty")
 def student_roster_summary():
     faculty_id = int(get_jwt_identity())
-    rosters = FacultyClassRoster.query.filter_by(faculty_id=faculty_id).all()
-    total = sum(len(r.students or []) for r in rosters)
-    return jsonify(
-        {
-            "total_students": total,
-            "roster_count": len(rosters),
-            "rosters": [r.to_dict() for r in rosters],
-        }
-    ), 200
+    return jsonify(roster_summary_payload(faculty_id)), 200
 
 
 @faculty_bp.route("/marksheets", methods=["GET"])
@@ -372,15 +365,17 @@ def create_marksheet():
     if student_source == "database":
         pass
     elif student_source == "roster":
-        roster = get_roster(faculty_id, branch, department_name, year, semester)
-        roster_size = len(roster.students) if roster else 0
+        roster_entries = roster_student_entries(
+            faculty_id, branch, department_name, year, semester
+        )
+        roster_size = len(roster_entries)
         if roster_size == 0:
             errors.append(
-                "No saved class list for this selection. Add students from the Dashboard Students card."
+                "No class list for this selection. Your HOD must add students for this year, or save a list from the Dashboard Students card."
             )
         elif num_students < 1 or num_students > roster_size:
             errors.append(
-                f"Number of students must be between 1 and {roster_size} (your saved class list size)."
+                f"Number of students must be between 1 and {roster_size} (available class list size)."
             )
     elif student_source == "manual":
         if num_students < 1 or num_students > 200:
@@ -418,9 +413,11 @@ def create_marksheet():
             else:
                 student_rows = build_student_rows(students, assessment_ids, num_questions)
         elif student_source == "roster":
-            roster = get_roster(faculty_id, branch, department_name, year, semester)
+            roster_entries = roster_student_entries(
+                faculty_id, branch, department_name, year, semester
+            )
             student_rows = build_roster_student_rows(
-                (roster.students or [])[:num_students],
+                roster_entries[:num_students],
                 assessment_ids,
                 num_questions,
             )
@@ -758,3 +755,63 @@ def submit_component_report():
             "department": dept_name,
         }
     ), 200
+
+
+@faculty_bp.route("/notifications", methods=["GET"])
+@jwt_required()
+@role_required("faculty")
+def list_notifications():
+    user_id = int(get_jwt_identity())
+    notifications = (
+        Notification.query.filter_by(user_id=user_id)
+        .order_by(Notification.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    unread_count = Notification.query.filter_by(user_id=user_id, is_read=False).count()
+    return jsonify(
+        {
+            "notifications": [n.to_dict() for n in notifications],
+            "unread_count": unread_count,
+        }
+    ), 200
+
+
+@faculty_bp.route("/notifications/<int:notification_id>/read", methods=["PATCH"])
+@jwt_required()
+@role_required("faculty")
+def mark_notification_read(notification_id):
+    user_id = int(get_jwt_identity())
+    notification = Notification.query.filter_by(id=notification_id, user_id=user_id).first()
+    if not notification:
+        return jsonify({"message": "Notification not found."}), 404
+
+    if not notification.is_read:
+        notification.is_read = True
+        notification.read_at = datetime.utcnow()
+        db.session.commit()
+
+    unread_count = Notification.query.filter_by(user_id=user_id, is_read=False).count()
+    return jsonify(
+        {
+            "message": "Notification marked as read.",
+            "notification": notification.to_dict(),
+            "unread_count": unread_count,
+        }
+    ), 200
+
+
+@faculty_bp.route("/notifications/read-all", methods=["POST"])
+@jwt_required()
+@role_required("faculty")
+def mark_all_notifications_read():
+    user_id = int(get_jwt_identity())
+    now = datetime.utcnow()
+    (
+        Notification.query.filter_by(user_id=user_id, is_read=False).update(
+            {"is_read": True, "read_at": now},
+            synchronize_session=False,
+        )
+    )
+    db.session.commit()
+    return jsonify({"message": "All notifications marked as read.", "unread_count": 0}), 200
