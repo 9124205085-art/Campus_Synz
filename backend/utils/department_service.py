@@ -199,6 +199,111 @@ def class_slot_range(class_number: int, total_slots: int, class_count: int) -> t
     return start, end
 
 
+def get_department_class_profiles(department_id, year, default_department_name: str = "") -> list:
+    """Class profile rows for each class in a year (with slot ranges)."""
+    from models import Department, DepartmentClassProfile
+
+    try:
+        year = int(year)
+    except (TypeError, ValueError):
+        return []
+
+    dept = Department.query.get(department_id) if department_id else None
+    dept_label = (default_department_name or (dept.name if dept else "") or "").strip()
+    class_count = get_department_year_class_counts(department_id).get(year, 1)
+    total_slots = department_year_target_count(department_id, year)
+
+    saved = {
+        row.class_number: row
+        for row in DepartmentClassProfile.query.filter_by(
+            department_id=department_id, year=year
+        ).all()
+    }
+
+    profiles = []
+    for class_number in range(1, class_count + 1):
+        row = saved.get(class_number)
+        start, end = class_slot_range(class_number, total_slots, class_count)
+        if row:
+            payload = row.to_dict()
+        else:
+            payload = {
+                "id": None,
+                "department_id": department_id,
+                "year": year,
+                "class_number": class_number,
+                "class_label": f"Class {class_number}",
+                "department_name": dept_label,
+                "class_teacher_name": "",
+                "semester": 1,
+                "admission_year": "",
+                "updated_at": None,
+            }
+        payload["slot_start"] = start
+        payload["slot_end"] = end
+        payload["student_capacity"] = max(0, end - start + 1) if end >= start else 0
+        profiles.append(payload)
+    return profiles
+
+
+def upsert_department_class_profile(department_id, year, class_number, data: dict):
+    from models import DepartmentClassProfile
+
+    try:
+        year = int(year)
+        class_number = int(class_number)
+    except (TypeError, ValueError):
+        return None, ["Valid year and class number are required."]
+    if year not in (1, 2, 3, 4):
+        return None, ["Year must be between 1 and 4."]
+    if class_number < 1 or class_number > 50:
+        return None, ["Class number must be between 1 and 50."]
+
+    max_class = get_department_year_class_counts(department_id).get(year, 1)
+    if class_number > max_class:
+        return None, [f"Class {class_number} is not configured for year {year}."]
+
+    department_name = (data.get("department_name") or "").strip() or None
+    class_teacher_name = (data.get("class_teacher_name") or "").strip() or None
+    admission_year = (data.get("admission_year") or "").strip() or None
+
+    semester = data.get("semester")
+    if semester is not None and semester != "":
+        try:
+            semester = int(semester)
+        except (TypeError, ValueError):
+            return None, ["Semester must be a number."]
+        if semester not in (1, 2, 3, 4, 5, 6, 7, 8):
+            return None, ["Semester must be between 1 and 8."]
+    else:
+        semester = None
+
+    row = DepartmentClassProfile.query.filter_by(
+        department_id=department_id, year=year, class_number=class_number
+    ).first()
+    if row:
+        row.department_name = department_name
+        row.class_teacher_name = class_teacher_name
+        row.semester = semester
+        row.admission_year = admission_year
+    else:
+        row = DepartmentClassProfile(
+            department_id=department_id,
+            year=year,
+            class_number=class_number,
+            department_name=department_name,
+            class_teacher_name=class_teacher_name,
+            semester=semester,
+            admission_year=admission_year,
+        )
+        db.session.add(row)
+    db.session.commit()
+
+    profiles = get_department_class_profiles(department_id, year, department_name or "")
+    profile = next((p for p in profiles if p["class_number"] == class_number), row.to_dict())
+    return profile, []
+
+
 def department_year_target_count(department_id, year) -> int:
     """Total slot count for a year (HOD setting, else named student count)."""
     try:

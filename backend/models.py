@@ -350,6 +350,8 @@ class HodChecklistItem(db.Model):
             "semester": self.semester,
             "course_code": self.course_code,
             "course_name": self.course_name or "",
+            "component_id": self.component_id or "",
+            "component_label": self.component_label or "",
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -422,5 +424,43 @@ class DepartmentYearSetting(db.Model):
             "year": self.year,
             "class_count": self.class_count,
             "student_count": self.student_count,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class DepartmentClassProfile(db.Model):
+    """HOD-entered metadata for each class within a department year."""
+
+    __tablename__ = "department_class_profiles"
+
+    id = db.Column(db.Integer, primary_key=True)
+    department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), nullable=False, index=True)
+    year = db.Column(db.Integer, nullable=False)
+    class_number = db.Column(db.Integer, nullable=False, default=1)
+    department_name = db.Column(db.String(120), nullable=True)
+    class_teacher_name = db.Column(db.String(120), nullable=True)
+    semester = db.Column(db.Integer, nullable=True)
+    admission_year = db.Column(db.String(20), nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    department_rel = db.relationship("Department", backref="class_profiles")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "department_id", "year", "class_number", name="uq_department_class_profile"
+        ),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "department_id": self.department_id,
+            "year": self.year,
+            "class_number": self.class_number,
+            "class_label": f"Class {self.class_number}",
+            "department_name": self.department_name or "",
+            "class_teacher_name": self.class_teacher_name or "",
+            "semester": self.semester,
+            "admission_year": self.admission_year or "",
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

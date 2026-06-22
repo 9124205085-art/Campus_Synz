@@ -71,6 +71,57 @@ export function getAssignmentLevelConfig(marksheet, componentId, level) {
   }
 }
 
+/** Question count configured for one component (assignment levels vs sheet-wide CA). */
+export function componentQuestionCountForMarksheet(marksheet, componentId) {
+  const labelMap = marksheet?.assessment_label_map || {}
+  const components = marksheet?.assessment_components || []
+  const labelIdx = components.indexOf(componentId)
+  const label = labelMap[componentId] || marksheet?.assessment_labels?.[labelIdx] || componentId
+
+  if (!isAssignmentComponent(componentId, label)) {
+    return marksheet?.num_questions || 0
+  }
+
+  const settings = marksheet?.component_settings?.[componentId]
+  let maxFromSettings = 0
+  if (settings?.levels) {
+    for (const level of ASSIGNMENT_LEVELS) {
+      maxFromSettings = Math.max(maxFromSettings, levelQuestionCount(settings.levels[level]))
+    }
+  }
+  if (maxFromSettings > 0) return maxFromSettings
+
+  let maxFromStudents = 0
+  for (const row of marksheet?.student_rows || []) {
+    const cfg = questionConfigForAssignmentStudent(marksheet, componentId, row)
+    maxFromStudents = Math.max(maxFromStudents, levelQuestionCount(cfg))
+  }
+  if (maxFromStudents > 0) return maxFromStudents
+
+  return marksheet?.num_questions || 0
+}
+
+/** Header CO / max marks for displaying an assignment component column block. */
+export function assignmentDisplayQuestionConfig(marksheet, componentId, componentNumQ) {
+  const settings = marksheet?.component_settings?.[componentId]
+  for (const level of ASSIGNMENT_LEVELS) {
+    const cfg = settings?.levels?.[level]
+    const n = levelQuestionCount(cfg)
+    if (n > 0) {
+      return {
+        num_questions: Math.min(n, componentNumQ),
+        question_cos: (cfg.question_cos || []).slice(0, componentNumQ),
+        question_marks: (cfg.question_marks || []).slice(0, componentNumQ),
+      }
+    }
+  }
+  return {
+    num_questions: componentNumQ,
+    question_cos: [],
+    question_marks: [],
+  }
+}
+
 /** Question CO/marks for a student on an assignment component (uses their assigned level). */
 export function questionConfigForAssignmentStudent(marksheet, componentId, studentRow) {
   const level = studentRow?.assignment_levels?.[componentId]

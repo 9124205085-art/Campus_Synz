@@ -497,15 +497,32 @@ def hod_list_students():
     user = _current_hod()
     if not user or not user.department_id:
         return jsonify({"students": []}), 200
-    from utils.department_service import faculty_names_for_department_year, list_department_students
+    from utils.department_service import (
+        faculty_names_for_department_year,
+        get_department_class_profiles,
+        get_department_year_class_counts,
+        list_department_students,
+    )
 
     year = request.args.get("year")
     students = list_department_students(user.department_id, year=year)
     year_faculty = faculty_names_for_department_year(user.department_id, year)
+    dept_name = (user.department_rel.name if user.department_rel else "") or ""
+    class_profiles = []
+    class_count = 1
+    if year not in (None, "", "all"):
+        try:
+            year_int = int(year)
+            class_profiles = get_department_class_profiles(user.department_id, year_int, dept_name)
+            class_count = get_department_year_class_counts(user.department_id).get(year_int, 1)
+        except (TypeError, ValueError):
+            pass
     return jsonify(
         {
             "students": students,
             "year_faculty": year_faculty,
+            "class_profiles": class_profiles,
+            "class_count": class_count,
         }
     ), 200
 
@@ -692,6 +709,78 @@ def hod_update_year_setting(year):
             "year_settings": settings,
         }
     ), 200
+
+
+@hod_bp.route("/year-settings/<int:year>/class-profiles/<int:class_number>", methods=["PUT"])
+@jwt_required()
+@role_required("hod")
+def hod_update_class_profile(year, class_number):
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"message": "Department not linked."}), 400
+
+    from utils.department_service import get_department_class_profiles, upsert_department_class_profile
+
+    data = request.get_json(silent=True) or {}
+    profile, errors = upsert_department_class_profile(
+        user.department_id, year, class_number, data
+    )
+    if errors:
+        return jsonify({"message": " ".join(errors), "errors": errors}), 400
+
+    dept_name = (user.department_rel.name if user.department_rel else "") or ""
+    return jsonify(
+        {
+            "message": f"Class {class_number} details saved.",
+            "profile": profile,
+            "class_profiles": get_department_class_profiles(
+                user.department_id, year, dept_name
+            ),
+        }
+    ), 200
+
+
+@hod_bp.route("/mark-list/filters", methods=["GET"])
+@jwt_required()
+@role_required("hod")
+def hod_mark_list_filters():
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"batches": [], "years": [], "semesters": [], "classes": [], "courses": [], "components": []}), 200
+    from utils.hod_mark_list_service import mark_list_filter_options
+
+    return jsonify(mark_list_filter_options(user.department_id)), 200
+
+
+@hod_bp.route("/mark-list", methods=["GET"])
+@jwt_required()
+@role_required("hod")
+def hod_mark_list_search():
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"students": [], "components": [], "course": None}), 200
+
+    from utils.hod_mark_list_service import mark_list_search
+
+    def _int_arg(name):
+        try:
+            v = request.args.get(name)
+            return int(v) if v not in (None, "", "all") else None
+        except (TypeError, ValueError):
+            return None
+
+    batch = (request.args.get("batch") or "").strip() or None
+    assignment_id = _int_arg("assignment_id")
+    result = mark_list_search(
+        user.department_id,
+        batch=batch,
+        year=_int_arg("year"),
+        semester=_int_arg("semester"),
+        class_number=_int_arg("class_number"),
+        assignment_id=assignment_id,
+        component_id=(request.args.get("component_id") or "").strip() or None,
+    )
+    return jsonify(result), 200
 
 
 @hod_bp.route("/co-attainment/course", methods=["GET"])

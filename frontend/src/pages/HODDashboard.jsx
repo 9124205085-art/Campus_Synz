@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import AssignmentTable from '../components/AssignmentTable'
-import DashboardLayout from '../components/DashboardLayout'
+import HodShell from '../components/hod/HodShell'
 import FacultyCourseTable from '../components/FacultyCourseTable'
 import HodChecklistPanel from '../components/hod/HodChecklistPanel'
 import HodStatDetailsModal from '../components/hod/HodStatDetailsModal'
@@ -219,6 +220,7 @@ function CoSubmissionDetail({ submission }) {
 }
 
 export default function HODDashboard() {
+  const navigate = useNavigate()
   const [data, setData] = useState(null)
   const [facultyList, setFacultyList] = useState([])
   const [coSubmissions, setCoSubmissions] = useState([])
@@ -402,7 +404,7 @@ export default function HODDashboard() {
   }
 
   return (
-    <DashboardLayout title="HOD Dashboard" subtitle="Department management">
+    <HodShell title="Dashboard" breadcrumbs={['Dashboard']}>
       {error && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
           {error}
@@ -459,53 +461,53 @@ export default function HODDashboard() {
         <StatCard
           label="Faculty"
           value={data?.stats?.faculty_count ?? '—'}
-          onClick={() => setStatDetailType('faculty')}
+          onClick={() => navigate('/hod/faculty')}
         />
         <StatCard
           label="Courses"
           value={data?.stats?.courses_count ?? '—'}
           accent="bg-emerald-600"
-          onClick={() => setStatDetailType('courses')}
+          onClick={() => navigate('/hod/courses')}
         />
         <StatCard
           label="Assignments"
           value={data?.stats?.assignments_count ?? '—'}
           accent="bg-blue-600"
-          onClick={() => setStatDetailType('assignments')}
+          onClick={() => navigate('/hod/assignments')}
         />
         <StatCard
           label="Classes"
           value={data?.stats?.class_count ?? '—'}
           accent="bg-violet-600"
-          onClick={() => setStatDetailType('classes')}
+          onClick={() => navigate('/hod/classes')}
         />
         <StatCard
           label="Year 1 Students"
           value={data?.stats?.students_year_1 ?? '—'}
           sub={`${data?.stats?.classes_year_1 ?? 1} class${(data?.stats?.classes_year_1 ?? 1) === 1 ? '' : 'es'}`}
           accent="bg-amber-500"
-          onClick={() => setStatDetailType('students_year_1')}
+          onClick={() => navigate('/hod/students/1')}
         />
         <StatCard
           label="Year 2 Students"
           value={data?.stats?.students_year_2 ?? '—'}
           sub={`${data?.stats?.classes_year_2 ?? 1} class${(data?.stats?.classes_year_2 ?? 1) === 1 ? '' : 'es'}`}
           accent="bg-orange-500"
-          onClick={() => setStatDetailType('students_year_2')}
+          onClick={() => navigate('/hod/students/2')}
         />
         <StatCard
           label="Year 3 Students"
           value={data?.stats?.students_year_3 ?? '—'}
           sub={`${data?.stats?.classes_year_3 ?? 1} class${(data?.stats?.classes_year_3 ?? 1) === 1 ? '' : 'es'}`}
           accent="bg-teal-600"
-          onClick={() => setStatDetailType('students_year_3')}
+          onClick={() => navigate('/hod/students/3')}
         />
         <StatCard
           label="Year 4 Students"
           value={data?.stats?.students_year_4 ?? '—'}
           sub={`${data?.stats?.classes_year_4 ?? 1} class${(data?.stats?.classes_year_4 ?? 1) === 1 ? '' : 'es'}`}
           accent="bg-indigo-600"
-          onClick={() => setStatDetailType('students_year_4')}
+          onClick={() => navigate('/hod/students/4')}
         />
       </div>
 
@@ -806,6 +808,6 @@ export default function HODDashboard() {
           </div>
         </div>
       )}
-    </DashboardLayout>
+    </HodShell>
   )
 }

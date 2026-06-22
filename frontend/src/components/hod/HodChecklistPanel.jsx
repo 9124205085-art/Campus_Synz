@@ -25,6 +25,16 @@ const COMPONENT_PRESETS = [
   { id: 'model_exam', label: 'Model Examination' },
 ]
 
+function componentDisplayName(item) {
+  if (item.component_label?.trim()) return item.component_label.trim()
+  const preset = COMPONENT_PRESETS.find((p) => p.id === item.component_id)
+  if (preset) return preset.label
+  if (item.component_id?.trim()) {
+    return item.component_id.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  }
+  return '—'
+}
+
 function CheckIcon({ done }) {
   if (done) {
     return (
@@ -151,7 +161,7 @@ export default function HodChecklistPanel({ onMessage, onError, refreshKey = 0 }
   }
 
   const handleRemove = async (item, courseCode) => {
-    if (!window.confirm(`Remove ${item.component_label || item.component_id} from ${courseCode}?`)) {
+    if (!window.confirm(`Remove ${componentDisplayName(item)} from ${courseCode}?`)) {
       return
     }
     setRemovingId(item.id)
@@ -373,7 +383,7 @@ export default function HodChecklistPanel({ onMessage, onError, refreshKey = 0 }
                           <CheckIcon done={item.completed} />
                         </td>
                         <td className="px-4 py-2.5 font-medium">
-                          {item.component_label || item.component_id}
+                          {componentDisplayName(item)}
                         </td>
                         <td className="px-4 py-2.5">{item.submitted_by || '—'}</td>
                         <td className="px-4 py-2.5 text-xs text-slate-500">

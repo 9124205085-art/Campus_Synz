@@ -2,9 +2,10 @@ import * as XLSX from 'xlsx'
 import {
   ASSIGNMENT_LEVEL_LABELS,
   ASSIGNMENT_LEVELS,
+  assignmentDisplayQuestionConfig,
+  componentQuestionCountForMarksheet,
   isAssignmentComponent,
   levelQuestionCount,
-  padLevelQuestionConfig,
   questionConfigForAssignmentStudent,
 } from './assignmentLevels'
 
@@ -107,6 +108,53 @@ export function componentHasAnyMarks(marksheet, componentId) {
     if (componentHasMarks(row.assessment_marks?.[componentId])) return true
   }
   return false
+}
+
+const LEGACY_COMPONENT_LABELS = {
+  ca1: 'Continuous Assessment 1',
+  ca2: 'Continuous Assessment 2',
+  assignment_1: 'Assignment 1',
+  assignment_2: 'Assignment 2',
+  quiz_1: 'Quiz 1',
+  model_exam: 'Model Examination',
+}
+
+function normComponentKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+}
+
+function componentMatchKeys(id, label) {
+  const keys = new Set()
+  for (const value of [id, label]) {
+    const text = String(value || '').trim()
+    if (!text) continue
+    keys.add(normComponentKey(text))
+    if (LEGACY_COMPONENT_LABELS[text]) {
+      keys.add(normComponentKey(LEGACY_COMPONENT_LABELS[text]))
+    }
+  }
+  return keys
+}
+
+/** Map HOD checklist id (e.g. ca1) to marksheet assessment_marks key. */
+export function resolveMarksheetComponentId(marksheet, filterId, filterLabel = '') {
+  if (!marksheet || !filterId) return filterId
+
+  const ids = discoverMarksheetComponents(marksheet)
+  if (ids.includes(filterId)) return filterId
+
+  const itemKeys = componentMatchKeys(filterId, filterLabel)
+  for (const id of ids) {
+    const label = assessmentLabelFor(marksheet, id)
+    const compKeys = componentMatchKeys(id, label)
+    for (const key of itemKeys) {
+      if (key && compKeys.has(key)) return id
+    }
+  }
+
+  return filterId
 }
 
 /** All assessment components on a mark sheet (configured + any with saved marks). */
@@ -392,13 +440,57 @@ export function consolidatedStudentKey(row) {
   return studentRegKey(row)
 }
 
+/** Merge HOD department roster into mark sheet rows (preserves saved marks). */
+export function enrichMarksheetsWithRoster(marksheets, rosterStudents) {
+  if (!marksheets?.length || !rosterStudents?.length) return marksheets
+
+  const rosterRows = rosterStudents.map((s) => ({
+    register_number: s.register_number || '',
+    student_name: (s.full_name || s.student_name || '').trim(),
+    assessment_marks: {},
+    assignment_levels: {},
+  }))
+
+  return marksheets.map((sheet, index) => {
+    if (index !== 0) return sheet
+
+    const byReg = new Map()
+    for (const row of sheet.student_rows || []) {
+      const key = String(row.register_number || '').trim().toUpperCase()
+      if (key) byReg.set(key, row)
+    }
+
+    const merged = rosterRows.map((r) => {
+      const key = String(r.register_number || '').trim().toUpperCase()
+      const existing = byReg.get(key)
+      if (existing) {
+        byReg.delete(key)
+        return {
+          ...existing,
+          student_name: existing.student_name || r.student_name,
+        }
+      }
+      return r
+    })
+
+    for (const row of byReg.values()) merged.push(row)
+    return { ...sheet, student_rows: merged }
+  })
+}
+
 /** Per-student CO and PO for a single assessment component (CA1, CA2, etc.). */
-export function calculateComponentAttainment(marksheet, componentId, threshold, coPoMapping) {
+export function calculateComponentAttainment(
+  marksheet,
+  componentId,
+  threshold,
+  coPoMapping,
+  { allowEmpty = false } = {},
+) {
   if (!marksheet || !componentId) return null
 
-  const numQ = marksheet.num_questions || 0
-  const questionCos = normaliseQuestionCos(marksheet.question_cos, numQ)
-  const questionMarks = normaliseQuestionMarks(marksheet.question_marks, numQ)
+  const globalNumQ = marksheet.num_questions || 0
+  const questionCos = normaliseQuestionCos(marksheet.question_cos, globalNumQ)
+  const questionMarks = normaliseQuestionMarks(marksheet.question_marks, globalNumQ)
   const labelMap = marksheet.assessment_label_map || {}
   const components = marksheet.assessment_components || []
   const labelIdx = components.indexOf(componentId)
@@ -407,23 +499,35 @@ export function calculateComponentAttainment(marksheet, componentId, threshold, 
     marksheet.assessment_labels?.[labelIdx] ||
     componentId
   const isAssignment = isAssignmentComponent(componentId, label)
+  const componentNumQ = isAssignment
+    ? componentQuestionCountForMarksheet(marksheet, componentId)
+    : globalNumQ
+
+  let displayQuestionCos = questionCos.slice(0, componentNumQ)
+  let displayQuestionMaxMarks = questionMarks.slice(0, componentNumQ)
+  if (isAssignment) {
+    const headerCfg = assignmentDisplayQuestionConfig(marksheet, componentId, componentNumQ)
+    displayQuestionCos = normaliseQuestionCos(headerCfg.question_cos, componentNumQ)
+    displayQuestionMaxMarks = normaliseQuestionMarks(headerCfg.question_marks, componentNumQ)
+  }
 
   let usedCOs
   if (isAssignment) {
     const allCos = new Set()
     for (const row of marksheet.student_rows || []) {
       const cfg = questionConfigForAssignmentStudent(marksheet, componentId, row)
-      normaliseQuestionCos(cfg.question_cos, numQ).forEach((co) => allCos.add(co))
+      normaliseQuestionCos(cfg.question_cos, componentNumQ).forEach((co) => {
+        if (co) allCos.add(co)
+      })
     }
     if (!allCos.size) {
-      normaliseQuestionCos(
-        marksheet.component_settings?.[componentId]?.levels?.higher?.question_cos,
-        numQ,
-      ).forEach((co) => allCos.add(co))
+      displayQuestionCos.forEach((co) => {
+        if (co) allCos.add(co)
+      })
     }
     usedCOs = [...allCos].sort()
   } else {
-    usedCOs = [...new Set(questionCos)].sort()
+    usedCOs = [...new Set(displayQuestionCos)].sort()
   }
 
   const mapping =
@@ -432,26 +536,26 @@ export function calculateComponentAttainment(marksheet, componentId, threshold, 
       : buildDefaultCoPoMapping(usedCOs)
 
   const rows = dedupeStudentRows(marksheet.student_rows || [], componentId)
-  if (!rows.length) return null
+  if (!rows.length && !allowEmpty) return null
 
   const studentResults = rows.map((row) => {
     const rowConfig = isAssignment
       ? questionConfigForAssignmentStudent(marksheet, componentId, row)
       : { question_cos: questionCos, question_marks: questionMarks }
-    const rowNumQ = isAssignment ? levelQuestionCount(rowConfig) || numQ : numQ
-    const padded = isAssignment
-      ? padLevelQuestionConfig(rowConfig, numQ)
-      : {
-          question_cos: normaliseQuestionCos(rowConfig.question_cos, numQ),
-          question_marks: normaliseQuestionMarks(rowConfig.question_marks, numQ),
-        }
-    const rowQuestionCos = padded.question_cos
-    const rowQuestionMarks = padded.question_marks
+    const rowNumQ = isAssignment ? levelQuestionCount(rowConfig) || componentNumQ : componentNumQ
+    const rowQuestionCos = normaliseQuestionCos(
+      isAssignment ? rowConfig.question_cos : questionCos,
+      componentNumQ,
+    )
+    const rowQuestionMarks = normaliseQuestionMarks(
+      isAssignment ? rowConfig.question_marks : questionMarks,
+      componentNumQ,
+    )
 
     const marks = row.assessment_marks?.[componentId] || []
     const hasMarks = componentHasMarks(marks.slice(0, rowNumQ))
 
-    const questionMarksPerStudent = Array.from({ length: numQ }, (_, i) => {
+    const questionMarksPerStudent = Array.from({ length: componentNumQ }, (_, i) => {
       if (!hasMarks || i >= rowNumQ) return null
       const val = marks[i]
       if (val === '' || val == null || String(val).trim() === '') return null
@@ -506,16 +610,18 @@ export function calculateComponentAttainment(marksheet, componentId, threshold, 
   })
 
   const withMarks = studentResults.filter((s) => s.hasMarks)
-  if (!withMarks.length) return null
+  if (!withMarks.length && !allowEmpty) return null
 
-  const classAverages = computeClassAverages(withMarks, { usedCOs, numQuestions: numQ })
+  const classAverages = withMarks.length
+    ? computeClassAverages(withMarks, { usedCOs, numQuestions: componentNumQ })
+    : null
 
   return {
     usedCOs,
     studentResults,
-    questionCos,
-    questionMaxMarks: questionMarks,
-    numQuestions: numQ,
+    questionCos: displayQuestionCos,
+    questionMaxMarks: displayQuestionMaxMarks,
+    numQuestions: componentNumQ,
     threshold,
     componentId,
     componentIds: [componentId],
@@ -599,13 +705,16 @@ export function buildConsolidatedComponentReport(
   componentIds,
   threshold,
   coPoMapping,
+  { allowEmpty = false } = {},
 ) {
   const ids = (componentIds || []).filter(Boolean)
   if (!marksheet || !ids.length) return null
 
   const perComponent = {}
   for (const id of ids) {
-    perComponent[id] = calculateComponentAttainment(marksheet, id, threshold, coPoMapping)
+    perComponent[id] = calculateComponentAttainment(marksheet, id, threshold, coPoMapping, {
+      allowEmpty,
+    })
   }
 
   const overall =
@@ -687,26 +796,20 @@ export function buildConsolidatedComponentReport(
   const hasAnyData =
     ids.some((id) => perComponent[id]?.studentsWithMarks > 0) ||
     (overall?.studentsWithMarks ?? 0) > 0
-  if (!hasAnyData) return null
+  if (!hasAnyData && !allowEmpty) return null
 
   return {
     componentIds: ids,
     componentMeta: ids.map((id) => {
       const result = perComponent[id]
-      let headerQuestionCos = result?.questionCos || questionCos
-      const label = assessmentLabelFor(marksheet, id)
-      if (isAssignmentComponent(id, label)) {
-        const higherCos =
-          marksheet.component_settings?.[id]?.levels?.higher?.question_cos
-        if (higherCos?.length) {
-          headerQuestionCos = normaliseQuestionCos(higherCos, numQ)
-        }
-      }
       return {
         id,
-        label,
+        label: assessmentLabelFor(marksheet, id),
         result,
-        questionCos: normaliseQuestionCos(headerQuestionCos, numQ),
+        numQuestions: result?.numQuestions ?? numQ,
+        questionCos: result?.questionCos ?? questionCos,
+        questionMaxMarks: result?.questionMaxMarks ?? questionMaxMarks,
+        usedCOs: result?.usedCOs ?? usedCOs,
       }
     }),
     overall,
@@ -1408,11 +1511,32 @@ export function exportComponentSummaryPdf(marksheet, summaryExport) {
 }
 
 /** Build consolidated CO/PO report from saved mark sheets (HOD / faculty views). */
-export function buildCourseReportFromMarksheets(marksheets, threshold = 60) {
-  const merged = mergeCourseMarksheets(marksheets)
+export function buildCourseReportFromMarksheets(
+  marksheets,
+  threshold = 60,
+  { componentId = null, componentLabel = '', allowEmpty = false, rosterStudents = null } = {},
+) {
+  let sheets = marksheets
+  if (rosterStudents?.length) {
+    sheets = enrichMarksheetsWithRoster(marksheets, rosterStudents)
+  }
+
+  const merged = mergeCourseMarksheets(sheets)
   if (!merged) return null
 
-  const components = discoverCompletedComponents(merged)
+  let components = discoverCompletedComponents(merged)
+  if (componentId) {
+    const resolvedId = resolveMarksheetComponentId(merged, componentId, componentLabel)
+    const configured = discoverMarksheetComponents(merged)
+    if (configured.includes(resolvedId)) {
+      components = [resolvedId]
+    } else {
+      components = components.filter((id) => id === resolvedId)
+      if (!components.length && resolvedId) {
+        components = [resolvedId]
+      }
+    }
+  }
   if (!components.length) return null
 
   const numQ = merged.num_questions || 0
@@ -1427,6 +1551,7 @@ export function buildCourseReportFromMarksheets(marksheets, threshold = 60) {
     components,
     threshold,
     coPoMapping,
+    { allowEmpty: allowEmpty || Boolean(componentId) },
   )
   if (!report) return null
 

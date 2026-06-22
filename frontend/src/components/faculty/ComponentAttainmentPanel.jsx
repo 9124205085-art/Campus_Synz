@@ -283,6 +283,13 @@ export function ExcelConsolidatedTable({ report }) {
     report
   const overallTheme = { header: 'bg-violet-200 text-violet-950', sub: 'bg-violet-100/80', cell: 'bg-violet-50/40' }
 
+  const compLayout = (comp) => ({
+    compNumQ: comp.numQuestions ?? numQuestions,
+    compUsedCOs: comp.usedCOs ?? comp.result?.usedCOs ?? usedCOs,
+    compMaxMarks: comp.questionMaxMarks ?? questionMaxMarks,
+    compQuestionCos: comp.questionCos ?? questionCos,
+  })
+
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-300">
       <table className="min-w-full border-collapse text-sm">
@@ -303,7 +310,8 @@ export function ExcelConsolidatedTable({ report }) {
           </tr>
           <tr>
             {componentMeta.map((comp, idx) => {
-              const cols = blockCols(numQuestions, usedCOs)
+              const { compNumQ, compUsedCOs } = compLayout(comp)
+              const cols = blockCols(compNumQ, compUsedCOs)
               const theme = COMPONENT_THEMES[idx % COMPONENT_THEMES.length]
               return (
                 <th
@@ -326,21 +334,22 @@ export function ExcelConsolidatedTable({ report }) {
           </tr>
           <tr>
             {componentMeta.map((comp, idx) => {
+              const { compNumQ, compUsedCOs, compMaxMarks } = compLayout(comp)
               const theme = COMPONENT_THEMES[idx % COMPONENT_THEMES.length]
               return (
                 <Fragment key={`hdr-${comp.id}`}>
-                  {Array.from({ length: numQuestions }, (_, i) => (
+                  {Array.from({ length: compNumQ }, (_, i) => (
                     <th
                       key={`${comp.id}-q-${i}`}
                       className={`border border-slate-300 px-1 py-1 text-center text-xs font-semibold ${theme.sub}`}
                     >
                       Q{i + 1}
-                      <span className="block font-normal">max {questionMaxMarks[i]}</span>
+                      <span className="block font-normal">max {compMaxMarks[i]}</span>
                     </th>
                   ))}
                   <th className={`border border-slate-300 px-1 py-1 text-center text-xs ${theme.sub}`}>Total</th>
                   <th className={`border border-slate-300 px-1 py-1 text-center text-xs ${theme.sub}`}>Max</th>
-                  {usedCOs.map((co) => (
+                  {compUsedCOs.map((co) => (
                     <th
                       key={`${comp.id}-${co}`}
                       colSpan={2}
@@ -407,19 +416,19 @@ export function ExcelConsolidatedTable({ report }) {
           <tr className="bg-slate-50 text-[10px] text-slate-600">
             {componentMeta.map((comp, idx) => {
               const theme = COMPONENT_THEMES[idx % COMPONENT_THEMES.length]
-              const compQuestionCos = comp.questionCos || comp.result?.questionCos || questionCos || []
+              const { compNumQ, compUsedCOs, compQuestionCos } = compLayout(comp)
               return (
                 <Fragment key={`sub-${comp.id}`}>
-                  {Array.from({ length: numQuestions }, (_, i) => (
+                  {Array.from({ length: compNumQ }, (_, i) => (
                     <th
                       key={i}
                       className={`border border-slate-300 px-0.5 py-0.5 text-center font-semibold text-navy ${theme.sub}`}
                     >
-                      {compQuestionCos[i] || questionCos?.[i] || '—'}
+                      {compQuestionCos[i] || '—'}
                     </th>
                   ))}
                   <th colSpan={2} className={`border border-slate-300 ${theme.sub}`} />
-                  {usedCOs.map((co) => (
+                  {compUsedCOs.map((co) => (
                     <Fragment key={co}>
                       <th className={`border border-slate-300 px-0.5 py-0.5 text-center ${theme.sub}`}>Mk</th>
                       <th className={`border border-slate-300 px-0.5 py-0.5 text-center ${theme.sub}`}>%</th>
@@ -472,15 +481,17 @@ export function ExcelConsolidatedTable({ report }) {
               <td className="sticky left-[88px] z-20 border border-slate-300 bg-inherit px-2 py-1.5 font-medium">
                 {student.student_name || '—'}
               </td>
-              {componentMeta.map((comp, cidx) => (
+              {componentMeta.map((comp, cidx) => {
+                const { compNumQ, compUsedCOs } = compLayout(comp)
+                return (
                 <StudentComponentCells
                   key={comp.id}
                   data={student.byComponent[comp.id]}
-                  usedCOs={usedCOs}
-                  numQuestions={numQuestions}
+                  usedCOs={compUsedCOs}
+                  numQuestions={compNumQ}
                   theme={COMPONENT_THEMES[cidx % COMPONENT_THEMES.length]}
                 />
-              ))}
+              )})}
               {showOverall && (
                 <StudentComponentCells
                   data={student.overall}
@@ -498,20 +509,22 @@ export function ExcelConsolidatedTable({ report }) {
             >
               Class average (%)
             </td>
-            {componentMeta.map((comp, cidx) => (
+            {componentMeta.map((comp, cidx) => {
+              const { compNumQ, compUsedCOs } = compLayout(comp)
+              return (
               <StudentComponentCells
                 key={`avg-${comp.id}`}
                 data={classAveragesToCellData(
                   classAverages?.byComponent?.[comp.id],
-                  usedCOs,
-                  numQuestions,
+                  compUsedCOs,
+                  compNumQ,
                 )}
-                usedCOs={usedCOs}
-                numQuestions={numQuestions}
+                usedCOs={compUsedCOs}
+                numQuestions={compNumQ}
                 theme={COMPONENT_THEMES[cidx % COMPONENT_THEMES.length]}
                 isAverage
               />
-            ))}
+            )})}
             {showOverall && (
               <StudentComponentCells
                 data={classAveragesToCellData(

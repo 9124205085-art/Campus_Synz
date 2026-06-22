@@ -8,6 +8,7 @@ from models import (
     CourseAssignment,
     Department,
     DepartmentYearSetting,
+    DepartmentClassProfile,
     FacultyClassRoster,
     HodChecklistItem,
     MarkSheet,
@@ -450,6 +451,7 @@ def _delete_department_related(dept_id: int) -> None:
 
     HodChecklistItem.query.filter_by(department_id=dept_id).delete(synchronize_session=False)
     DepartmentYearSetting.query.filter_by(department_id=dept_id).delete(synchronize_session=False)
+    DepartmentClassProfile.query.filter_by(department_id=dept_id).delete(synchronize_session=False)
     MarkSheet.query.filter_by(department_id=dept_id).delete(synchronize_session=False)
 
 

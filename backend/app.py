@@ -35,6 +35,7 @@ def create_app(config_class=Config):
     from database.migrate_notifications import apply_notifications_schema
     from database.migrate_department_year_settings import apply_department_year_settings_schema
     from database.migrate_course_assignment_class import apply_course_assignment_class_schema
+    from database.migrate_department_class_profiles import apply_department_class_profiles_schema
     from utils.db_migration import add_column_if_missing, datetime_type
 
     apply_marksheet_schema_updates()
@@ -42,6 +43,7 @@ def create_app(config_class=Config):
     apply_notifications_schema()
     apply_department_year_settings_schema()
     apply_course_assignment_class_schema()
+    apply_department_class_profiles_schema()
     add_column_if_missing("users", "last_login_at", datetime_type())
     repair_marksheet_departments()
 

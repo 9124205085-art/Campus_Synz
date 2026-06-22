@@ -1,6 +1,36 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { hodAPI } from '../../services/api'
 
+function classSlotRange(classNumber, totalSlots, classCount) {
+  if (totalSlots <= 0 || classCount <= 0) return { start: 1, end: 0 }
+  const cn = Math.max(1, Math.min(classNumber, classCount))
+  const base = Math.floor(totalSlots / classCount)
+  const remainder = totalSlots % classCount
+  let start
+  let end
+  if (cn <= remainder) {
+    const size = base + 1
+    start = (cn - 1) * size + 1
+    end = cn * size
+  } else {
+    const size = base
+    start = remainder * (base + 1) + (cn - remainder - 1) * base + 1
+    end = start + size - 1
+  }
+  return { start, end }
+}
+
+function emptyClassForm(classNumber, departmentName, academicYear) {
+  return {
+    class_number: classNumber,
+    department_name: departmentName || '',
+    class_teacher_name: '',
+    semester: '1',
+    admission_year: '',
+    academic_year: String(academicYear || 1),
+  }
+}
+
 const TYPE_META = {
   faculty: { title: 'Faculty', subtitle: 'Department teaching staff', sectionId: 'hod-faculty-section' },
   courses: { title: 'Courses', subtitle: 'Courses in your department', sectionId: 'hod-faculty-section' },
@@ -63,7 +93,7 @@ function InlineStudentRow({ row, departmentName, year, yearFacultyLabel, saving,
   if (row.isPlaceholder) {
     return (
       <tr className="bg-amber-50/40">
-        <td className="px-6 py-2 text-xs font-medium text-slate-400">{row.slot}</td>
+        <td className="px-6 py-2 text-xs font-medium text-slate-400">{row.classSlot ?? row.slot}</td>
         <td className="px-4 py-2">
           <input
             value={reg}
@@ -101,7 +131,7 @@ function InlineStudentRow({ row, departmentName, year, yearFacultyLabel, saving,
 
   return (
     <tr className="hover:bg-slate-50/80">
-      <td className="px-6 py-3 text-xs text-slate-400">{row.slot}</td>
+      <td className="px-6 py-3 text-xs text-slate-400">{row.classSlot ?? row.slot}</td>
       <td className="px-4 py-3 font-mono">{row.register_number || '—'}</td>
       <td className="px-4 py-3 font-medium">{row.full_name}</td>
       <td className="px-4 py-3 text-slate-600">{row.branch || '—'}</td>
@@ -139,6 +169,7 @@ export default function HodStatDetailsModal({
   dashboardData,
   onNavigateSection,
   onRefresh,
+  embedded = false,
 }) {
   const meta = TYPE_META[type]
   const [items, setItems] = useState([])
@@ -154,6 +185,10 @@ export default function HodStatDetailsModal({
   const [studentCountInput, setStudentCountInput] = useState('0')
   const [yearSetting, setYearSetting] = useState(null)
   const [yearFaculty, setYearFaculty] = useState([])
+  const [classProfiles, setClassProfiles] = useState([])
+  const [activeClass, setActiveClass] = useState(1)
+  const [classForm, setClassForm] = useState(emptyClassForm(1, ''))
+  const [savingClassProfile, setSavingClassProfile] = useState(false)
 
   const isStudentView = type?.startsWith('students_year_')
   const departmentName = dashboardData?.department_detail?.name || dashboardData?.department || ''
@@ -183,9 +218,10 @@ export default function HodStatDetailsModal({
         ])
         setItems(studentsRes.data.students || [])
         setYearFaculty(studentsRes.data.year_faculty || [])
+        setClassProfiles(studentsRes.data.class_profiles || [])
         const setting = (settingsRes.data.year_settings || []).find((s) => s.year === meta.year)
         setYearSetting(setting || null)
-        setClassCount(String(setting?.class_count ?? 1))
+        setClassCount(String(setting?.class_count ?? studentsRes.data.class_count ?? 1))
         setStudentCountInput(String(setting?.student_count ?? 0))
       } else {
         setItems([])
@@ -203,8 +239,36 @@ export default function HodStatDetailsModal({
     setEditingId(null)
     setAdding(false)
     setMessage('')
+    setActiveClass(1)
     setForm(emptyStudentForm(departmentName))
   }, [load, departmentName])
+
+  const classesNum = parseInt(classCount, 10) || 1
+
+  const activeProfile = useMemo(
+    () => classProfiles.find((p) => p.class_number === activeClass),
+    [classProfiles, activeClass],
+  )
+
+  useEffect(() => {
+    if (!isStudentView || !meta?.year) return
+    if (activeProfile) {
+      setClassForm({
+        class_number: activeProfile.class_number,
+        department_name: activeProfile.department_name || departmentName,
+        class_teacher_name: activeProfile.class_teacher_name || '',
+        semester: String(activeProfile.semester ?? 1),
+        admission_year: activeProfile.admission_year || '',
+        academic_year: String(meta.year),
+      })
+    } else {
+      setClassForm(emptyClassForm(activeClass, departmentName, meta.year))
+    }
+  }, [activeProfile, activeClass, departmentName, isStudentView, meta?.year])
+
+  useEffect(() => {
+    if (activeClass > classesNum) setActiveClass(1)
+  }, [activeClass, classesNum])
 
   const displayStudentCount = isStudentView
     ? parseInt(studentCountInput, 10) || yearSetting?.student_count || 0
@@ -217,12 +281,37 @@ export default function HodStatDetailsModal({
     return buildStudentDisplayRows(items, displayStudentCount, meta.year, yearFacultyLabel)
   }, [isStudentView, meta?.year, items, displayStudentCount, yearFacultyLabel])
 
+  const classStudentRows = useMemo(() => {
+    if (!isStudentView) return studentDisplayRows
+    const profile = activeProfile
+    let start = 1
+    let end = displayStudentCount
+    if (profile?.slot_start != null && profile?.slot_end != null) {
+      start = profile.slot_start
+      end = profile.slot_end
+    } else if (displayStudentCount > 0 && classesNum >= 1) {
+      const range = classSlotRange(activeClass, displayStudentCount, classesNum)
+      start = range.start
+      end = range.end
+    }
+    return studentDisplayRows
+      .filter((row) => row.slot >= start && row.slot <= end)
+      .map((row, idx) => ({ ...row, classSlot: idx + 1 }))
+  }, [
+    isStudentView,
+    studentDisplayRows,
+    activeProfile,
+    activeClass,
+    displayStudentCount,
+    classesNum,
+  ])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const source = isStudentView ? studentDisplayRows : items
+    const source = isStudentView ? classStudentRows : items
     if (!q) return source
     return source.filter((item) => JSON.stringify(item).toLowerCase().includes(q))
-  }, [items, search, isStudentView, studentDisplayRows])
+  }, [items, search, isStudentView, classStudentRows])
 
   const startEdit = (student) => {
     setAdding(false)
@@ -259,6 +348,7 @@ export default function HodStatDetailsModal({
       })
       setYearSetting(res.data.setting)
       setMessage(res.data.message || 'Year settings saved.')
+      await load()
       onRefresh?.()
     } catch (err) {
       setError(err.response?.data?.message || 'Could not save year settings.')
@@ -267,7 +357,27 @@ export default function HodStatDetailsModal({
     }
   }
 
-  const classesNum = parseInt(classCount, 10) || 1
+  const handleSaveClassProfile = async () => {
+    if (!meta?.year) return
+    setSavingClassProfile(true)
+    setError('')
+    setMessage('')
+    try {
+      const res = await hodAPI.updateClassProfile(meta.year, activeClass, {
+        department_name: classForm.department_name.trim(),
+        class_teacher_name: classForm.class_teacher_name.trim(),
+        semester: parseInt(classForm.semester, 10) || 1,
+        admission_year: classForm.admission_year.trim(),
+      })
+      setClassProfiles(res.data.class_profiles || [])
+      setMessage(res.data.message || `Class ${activeClass} details saved.`)
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not save class details.')
+    } finally {
+      setSavingClassProfile(false)
+    }
+  }
+
   const perClass =
     displayStudentCount && classesNum
       ? Math.ceil((displayStudentCount / classesNum) * 10) / 10
@@ -344,10 +454,40 @@ export default function HodStatDetailsModal({
 
   if (!meta) return null
 
+  const footerText = loading
+    ? '—'
+    : isStudentView
+      ? `Class ${activeClass}: ${filtered.length} row(s) · ${filtered.filter((s) => s.full_name || s.register_number).length} named in this class`
+      : `${filtered.length} of ${items.length} records`
+
+  const scrollWrapClass = embedded
+    ? ''
+    : 'min-h-0 flex-1 overflow-y-auto overscroll-contain'
+
+  if (embedded) {
+    return (
+      <div className="w-full rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        <div className="border-b border-slate-100 px-6 py-3">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search…"
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+        {renderBody()}
+        <div className="border-t border-slate-100 px-6 py-3 text-sm text-slate-500">
+          {footerText}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
+      <div className="flex max-h-[90vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div>
             <h2 className="text-xl font-bold text-slate-900">{meta.title}</h2>
             <p className="mt-0.5 text-sm text-slate-500">{meta.subtitle}</p>
@@ -376,15 +516,29 @@ export default function HodStatDetailsModal({
           </div>
         </div>
 
-        <div className="border-b border-slate-100 px-6 py-3">
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search…"
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
+        <div className={scrollWrapClass}>
+          <div className="border-b border-slate-100 px-6 py-3">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search…"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+          {renderBody()}
         </div>
+
+        <div className="shrink-0 border-t border-slate-100 px-6 py-3 text-sm text-slate-500">
+          {footerText}
+        </div>
+      </div>
+    </div>
+  )
+
+  function renderBody() {
+    return (
+      <>
 
         {isStudentView && (
           <div className="border-b border-slate-100 bg-slate-50/80 px-6 py-4">
@@ -444,7 +598,134 @@ export default function HodStatDetailsModal({
           </div>
         )}
 
-        {isStudentView && (
+        {isStudentView && displayStudentCount > 0 && classesNum >= 1 && (
+          <div className="border-b border-slate-100 bg-white px-6 py-4">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                View class
+              </span>
+              {Array.from({ length: classesNum }, (_, i) => i + 1).map((cls) => {
+                const profile = classProfiles.find((p) => p.class_number === cls)
+                const countInClass = studentDisplayRows.filter((row) => {
+                  const start = profile?.slot_start ?? classSlotRange(cls, displayStudentCount, classesNum).start
+                  const end = profile?.slot_end ?? classSlotRange(cls, displayStudentCount, classesNum).end
+                  return row.slot >= start && row.slot <= end && (row.full_name || row.register_number)
+                }).length
+                return (
+                  <button
+                    key={cls}
+                    type="button"
+                    onClick={() => setActiveClass(cls)}
+                    className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                      activeClass === cls
+                        ? 'bg-teal-700 text-white'
+                        : 'bg-teal-50 text-teal-800 ring-1 ring-teal-200 hover:bg-teal-100'
+                    }`}
+                  >
+                    Class {cls}
+                    <span className="ml-1.5 text-xs font-normal opacity-80">
+                      ({countInClass} named)
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            <p className="text-sm font-semibold text-slate-800">
+              Class {activeClass} details
+            </p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Enter department, class teacher, semester, and admission year manually for this class.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="text-xs">
+                <span className="font-medium text-slate-600">Department name</span>
+                <input
+                  value={classForm.department_name}
+                  onChange={(e) =>
+                    setClassForm({ ...classForm, department_name: e.target.value })
+                  }
+                  placeholder="e.g. B.E. Mechanical"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-xs">
+                <span className="font-medium text-slate-600">Class teacher name</span>
+                <input
+                  value={classForm.class_teacher_name}
+                  onChange={(e) =>
+                    setClassForm({ ...classForm, class_teacher_name: e.target.value })
+                  }
+                  placeholder="e.g. Dr. Kumar"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-xs">
+                <span className="font-medium text-slate-600">Year</span>
+                <input
+                  value={classForm.academic_year}
+                  readOnly
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-xs">
+                <span className="font-medium text-slate-600">Semester</span>
+                <select
+                  value={classForm.semester}
+                  onChange={(e) => setClassForm({ ...classForm, semester: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                    <option key={s} value={String(s)}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs sm:col-span-2">
+                <span className="font-medium text-slate-600">Year of admission</span>
+                <input
+                  value={classForm.admission_year}
+                  onChange={(e) =>
+                    setClassForm({ ...classForm, admission_year: e.target.value })
+                  }
+                  placeholder="e.g. 2026-2027"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                disabled={savingClassProfile}
+                onClick={handleSaveClassProfile}
+                className="rounded-lg bg-navy px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {savingClassProfile ? 'Saving…' : `Save Class ${activeClass} details`}
+              </button>
+              {activeProfile && (
+                <p className="text-xs text-slate-500">
+                  Students in this class: slots {activeProfile.slot_start}–{activeProfile.slot_end}{' '}
+                  (≈ {activeProfile.student_capacity} slots)
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {isStudentView && displayStudentCount > 0 && (
+          <div className="border-b border-slate-100 px-6 py-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">
+              Class {activeClass} student list
+              {classForm.admission_year ? ` · Admission ${classForm.admission_year}` : ''}
+              {classForm.class_teacher_name
+                ? ` · Teacher: ${classForm.class_teacher_name}`
+                : ''}
+            </p>
+          </div>
+        )}
+
+        {isStudentView && displayStudentCount > 0 && (
           <div className="border-b border-slate-100 px-6 py-3">
             <button
               type="button"
@@ -558,7 +839,7 @@ export default function HodStatDetailsModal({
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div>
           {loading ? (
             <p className="px-6 py-12 text-center text-slate-500">Loading…</p>
           ) : isStudentView && displayStudentCount === 0 ? (
@@ -695,15 +976,7 @@ export default function HodStatDetailsModal({
             </table>
           )}
         </div>
-
-        <div className="border-t border-slate-100 px-6 py-3 text-sm text-slate-500">
-          {loading
-            ? '—'
-            : isStudentView
-              ? `${filtered.length} row(s) · ${filledCount} named`
-              : `${filtered.length} of ${items.length} records`}
-        </div>
-      </div>
-    </div>
-  )
+      </>
+    )
+  }
 }

@@ -67,6 +67,10 @@ export const hodAPI = {
   deleteStudent: (id) => api.delete(`/hod/students/${id}`),
   getYearSettings: () => api.get('/hod/year-settings'),
   updateYearSetting: (year, data) => api.put(`/hod/year-settings/${year}`, data),
+  updateClassProfile: (year, classNumber, data) =>
+    api.put(`/hod/year-settings/${year}/class-profiles/${classNumber}`, data),
+  getMarkListFilters: () => api.get('/hod/mark-list/filters'),
+  searchMarkList: (params) => api.get('/hod/mark-list', { params }),
 }
 
 export const facultyAPI = {
