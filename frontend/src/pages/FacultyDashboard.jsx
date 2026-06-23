@@ -156,7 +156,7 @@ export default function FacultyDashboard() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
           <p className="mt-1 text-slate-600">
-            Welcome back, {user?.full_name || 'Faculty'}! 👋
+            Welcome back, {user?.full_name || 'Faculty'}!
           </p>
           {departmentName && (
             <p className="mt-1 text-sm font-medium text-navy">{departmentName}</p>
