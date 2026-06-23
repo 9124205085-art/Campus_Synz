@@ -297,13 +297,13 @@ export function ExcelConsolidatedTable({ report }) {
           <tr className="bg-slate-200">
             <th
               rowSpan={4}
-              className="sticky left-0 z-30 min-w-[88px] border border-slate-300 bg-slate-200 px-2 py-2 text-left text-xs font-semibold"
+              className="sticky left-0 z-40 min-w-[88px] border border-slate-300 bg-slate-200 px-2 py-2 text-left text-xs font-semibold shadow-[2px_0_4px_-1px_rgba(15,23,42,0.06)]"
             >
               Reg. No
             </th>
             <th
               rowSpan={4}
-              className="sticky left-[88px] z-30 min-w-[140px] border border-slate-300 bg-slate-200 px-2 py-2 text-left font-semibold"
+              className="sticky left-[88px] z-50 min-w-[140px] border border-slate-300 bg-slate-200 px-2 py-2 text-left font-semibold shadow-[2px_0_4px_-1px_rgba(15,23,42,0.06)]"
             >
               Student Name
             </th>
@@ -473,12 +473,18 @@ export function ExcelConsolidatedTable({ report }) {
           </tr>
         </thead>
         <tbody>
-          {studentRows.map((student, idx) => (
-            <tr key={student.studentKey || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
-              <td className="sticky left-0 z-20 border border-slate-300 bg-inherit px-2 py-1.5 font-mono text-xs">
+          {studentRows.map((student, idx) => {
+            const rowBg = idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'
+            return (
+            <tr key={student.studentKey || idx} className={rowBg}>
+              <td
+                className={`sticky left-0 z-20 border border-slate-300 ${rowBg} px-2 py-1.5 font-mono text-xs shadow-[2px_0_4px_-1px_rgba(15,23,42,0.06)]`}
+              >
                 {student.register_number || '—'}
               </td>
-              <td className="sticky left-[88px] z-20 border border-slate-300 bg-inherit px-2 py-1.5 font-medium">
+              <td
+                className={`sticky left-[88px] z-30 border border-slate-300 ${rowBg} px-2 py-1.5 font-medium shadow-[2px_0_4px_-1px_rgba(15,23,42,0.06)]`}
+              >
                 {student.student_name || '—'}
               </td>
               {componentMeta.map((comp, cidx) => {
@@ -501,11 +507,12 @@ export function ExcelConsolidatedTable({ report }) {
                 />
               )}
             </tr>
-          ))}
+            )
+          })}
           <tr className="bg-slate-200 font-bold">
             <td
               colSpan={2}
-              className="sticky left-0 z-20 border border-slate-300 bg-slate-300 px-2 py-2 text-sm text-slate-800"
+              className="sticky left-0 z-30 border border-slate-300 bg-slate-200 px-2 py-2 text-sm text-slate-800 shadow-[2px_0_4px_-1px_rgba(15,23,42,0.06)]"
             >
               Class average (%)
             </td>

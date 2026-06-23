@@ -2,19 +2,19 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 
 const NAV = [
-  { to: '/hod/dashboard', label: 'Dashboard', icon: '▦' },
-  { to: '/hod/faculty', label: 'Faculty', icon: '👤' },
-  { to: '/hod/courses', label: 'Courses', icon: '📚' },
-  { to: '/hod/assignments', label: 'Assignments', icon: '📋' },
-  { to: '/hod/classes', label: 'Classes', icon: '🏫' },
+  { to: '/hod/dashboard', label: 'Dashboard' },
+  { to: '/hod/faculty', label: 'Faculty' },
+  { to: '/hod/courses', label: 'Courses' },
+  { to: '/hod/assignments', label: 'Assignments' },
+  { to: '/hod/classes', label: 'Classes' },
   { type: 'heading', label: 'Students' },
-  { to: '/hod/students/1', label: 'Year 1 Students', icon: '1' },
-  { to: '/hod/students/2', label: 'Year 2 Students', icon: '2' },
-  { to: '/hod/students/3', label: 'Year 3 Students', icon: '3' },
-  { to: '/hod/students/4', label: 'Year 4 Students', icon: '4' },
-  { to: '/hod/marks', label: 'Marks', icon: '✎' },
-  { to: '/hod/reports', label: 'Reports', icon: '📊' },
-  { to: '/hod/settings', label: 'Settings', icon: '⚙' },
+  { to: '/hod/students/1', label: 'Year 1 Students' },
+  { to: '/hod/students/2', label: 'Year 2 Students' },
+  { to: '/hod/students/3', label: 'Year 3 Students' },
+  { to: '/hod/students/4', label: 'Year 4 Students' },
+  { to: '/hod/marks', label: 'Marks' },
+  { to: '/hod/reports', label: 'Reports' },
+  { to: '/hod/settings', label: 'Settings' },
 ]
 
 function initials(name) {
@@ -71,7 +71,6 @@ export default function HodShell({ children, title, breadcrumbs = [] }) {
                       }`
                     }
                   >
-                    <span className="w-5 text-center text-xs opacity-80">{item.icon}</span>
                     {item.label}
                   </NavLink>
                 </li>

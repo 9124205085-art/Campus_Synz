@@ -1514,7 +1514,13 @@ export function exportComponentSummaryPdf(marksheet, summaryExport) {
 export function buildCourseReportFromMarksheets(
   marksheets,
   threshold = 60,
-  { componentId = null, componentLabel = '', allowEmpty = false, rosterStudents = null } = {},
+  {
+    componentId = null,
+    componentIds = null,
+    componentLabel = '',
+    allowEmpty = false,
+    rosterStudents = null,
+  } = {},
 ) {
   let sheets = marksheets
   if (rosterStudents?.length) {
@@ -1525,7 +1531,18 @@ export function buildCourseReportFromMarksheets(
   if (!merged) return null
 
   let components = discoverCompletedComponents(merged)
-  if (componentId) {
+
+  if (componentIds?.length) {
+    const resolved = []
+    for (const entry of componentIds) {
+      const rawId = typeof entry === 'string' ? entry : entry?.id || entry?.component_id
+      const label = typeof entry === 'object' ? entry.label || entry.component_label || '' : ''
+      if (!rawId) continue
+      const rid = resolveMarksheetComponentId(merged, rawId, label)
+      if (rid && !resolved.includes(rid)) resolved.push(rid)
+    }
+    if (resolved.length) components = resolved
+  } else if (componentId) {
     const resolvedId = resolveMarksheetComponentId(merged, componentId, componentLabel)
     const configured = discoverMarksheetComponents(merged)
     if (configured.includes(resolvedId)) {
@@ -1551,7 +1568,7 @@ export function buildCourseReportFromMarksheets(
     components,
     threshold,
     coPoMapping,
-    { allowEmpty: allowEmpty || Boolean(componentId) },
+    { allowEmpty: allowEmpty || Boolean(componentId) || Boolean(componentIds?.length) },
   )
   if (!report) return null
 
