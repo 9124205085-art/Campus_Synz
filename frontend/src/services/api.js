@@ -1,8 +1,21 @@
 import axios from 'axios'
 
-/** Baked in at Vercel build time — must be set as VITE_API_URL env var before deploy. */
-export const API_BASE_URL =
-  import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+/** Resolve API base URL: explicit env, local dev, or same-origin /api on Vercel (proxied to Render). */
+export function getApiBaseUrl() {
+  const configured = import.meta.env.VITE_API_URL?.trim()
+  if (configured) {
+    return configured.replace(/\/$/, '')
+  }
+  if (import.meta.env.DEV) {
+    return 'http://localhost:5000/api'
+  }
+  if (typeof window !== 'undefined') {
+    return `${window.location.origin}/api`
+  }
+  return '/api'
+}
+
+export const API_BASE_URL = getApiBaseUrl()
 
 const api = axios.create({
   baseURL: API_BASE_URL,

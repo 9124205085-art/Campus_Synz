@@ -88,7 +88,7 @@ export default function LoginPage() {
       const isNetwork = !err.response && String(err.message || '').toLowerCase().includes('network')
       setError(
         isNetwork
-          ? `Network error — cannot reach ${API_BASE_URL}. In Vercel → Settings → Environment Variables, set VITE_API_URL to https://YOUR-RENDER-APP.onrender.com/api (your Render URL + /api), then Redeploy.`
+          ? `Network error — cannot reach ${API_BASE_URL}. If the health URL works in your browser, set CORS_ORIGINS on Render to https://campus-synz.vercel.app and redeploy the backend. First visit may take ~1 min (Render free tier waking up).`
           : err.response?.data?.message || err.message || 'Login failed. Please try again.',
       )
     } finally {

@@ -26,6 +26,9 @@ def create_app(config_class=Config):
   if not cors_origins:
     cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
+  # Allow Vercel production + preview deployment URLs
+  cors_origins.append(r"https://.*\.vercel\.app")
+
   CORS(
     app,
     resources={r"/api/*": {"origins": cors_origins}},
