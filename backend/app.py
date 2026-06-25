@@ -20,19 +20,7 @@ def create_app(config_class=Config):
 
   # Fix: supports_credentials=True cannot be used with origins="*"
   # Specify the exact frontend origin instead
-CORS(
-    app,
-    resources={
-        r"/api/*": {
-            "origins": [
-                "http://localhost:5173",
-                "http://127.0.0.1:5173",
-                "https://campus-synz-enusggov7-9124205085-1684s-projects.vercel.app"
-            ]
-        }
-    },
-    supports_credentials=True,
-)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
   register_routes(app)
 
   with app.app_context():
