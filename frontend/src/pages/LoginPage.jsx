@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { API_BASE_URL } from '../services/api'
 
 function EyeIcon({ open }) {
   if (open) {
@@ -87,7 +88,7 @@ export default function LoginPage() {
       const isNetwork = !err.response && String(err.message || '').toLowerCase().includes('network')
       setError(
         isNetwork
-          ? 'Network error — the app cannot reach the backend. Set VITE_API_URL on Vercel to your Render API URL (…/api) and redeploy.'
+          ? `Network error — cannot reach ${API_BASE_URL}. In Vercel → Settings → Environment Variables, set VITE_API_URL to https://YOUR-RENDER-APP.onrender.com/api (your Render URL + /api), then Redeploy.`
           : err.response?.data?.message || err.message || 'Login failed. Please try again.',
       )
     } finally {
