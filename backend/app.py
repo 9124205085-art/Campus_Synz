@@ -18,9 +18,20 @@ def create_app(config_class=Config):
   db.init_app(app)
   jwt.init_app(app)
 
-  # Fix: supports_credentials=True cannot be used with origins="*"
-  # Specify the exact frontend origin instead
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+  cors_origins = [
+    origin.strip()
+    for origin in app.config.get("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+  ]
+  if not cors_origins:
+    cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+  CORS(
+    app,
+    resources={r"/api/*": {"origins": cors_origins}},
+    supports_credentials=True,
+  )
+
   register_routes(app)
 
   with app.app_context():

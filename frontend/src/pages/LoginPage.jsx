@@ -84,7 +84,12 @@ export default function LoginPage() {
       const redirectPath = await login(email.trim(), password)
       navigate(redirectPath)
     } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Login failed. Please try again.')
+      const isNetwork = !err.response && String(err.message || '').toLowerCase().includes('network')
+      setError(
+        isNetwork
+          ? 'Network error — the app cannot reach the backend. Set VITE_API_URL on Vercel to your Render API URL (…/api) and redeploy.'
+          : err.response?.data?.message || err.message || 'Login failed. Please try again.',
+      )
     } finally {
       setSubmitting(false)
     }
