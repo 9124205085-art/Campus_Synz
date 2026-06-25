@@ -63,6 +63,7 @@ export const hodAPI = {
   listClasses: () => api.get('/hod/classes'),
   listStudents: (year) => api.get('/hod/students', { params: year ? { year } : {} }),
   addStudent: (data) => api.post('/hod/students', data),
+  addStudentsBulk: (data) => api.post('/hod/students/bulk', data),
   updateStudent: (id, data) => api.put(`/hod/students/${id}`, data),
   deleteStudent: (id) => api.delete(`/hod/students/${id}`),
   getYearSettings: () => api.get('/hod/year-settings'),

@@ -153,4 +153,16 @@ def build_checklist_tree(department_id: int) -> dict:
 
 
 def delete_checklist_for_assignment(assignment_id: int) -> None:
-    HodChecklistItem.query.filter_by(course_assignment_id=assignment_id).delete()
+    from models import Notification
+
+    item_ids = [
+        row.id
+        for row in HodChecklistItem.query.filter_by(course_assignment_id=assignment_id).all()
+    ]
+    if item_ids:
+        Notification.query.filter(Notification.checklist_item_id.in_(item_ids)).delete(
+            synchronize_session=False
+        )
+    HodChecklistItem.query.filter_by(course_assignment_id=assignment_id).delete(
+        synchronize_session=False
+    )

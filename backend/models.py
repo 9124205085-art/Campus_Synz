@@ -441,6 +441,7 @@ class DepartmentClassProfile(db.Model):
     class_teacher_name = db.Column(db.String(120), nullable=True)
     semester = db.Column(db.Integer, nullable=True)
     admission_year = db.Column(db.String(20), nullable=True)
+    student_roster = db.Column(db.JSON, nullable=False, default=list)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     department_rel = db.relationship("Department", backref="class_profiles")
@@ -462,5 +463,6 @@ class DepartmentClassProfile(db.Model):
             "class_teacher_name": self.class_teacher_name or "",
             "semester": self.semester,
             "admission_year": self.admission_year or "",
+            "student_roster": self.student_roster or [],
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

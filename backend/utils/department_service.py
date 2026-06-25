@@ -304,6 +304,148 @@ def upsert_department_class_profile(department_id, year, class_number, data: dic
     return profile, []
 
 
+def save_class_student_roster(
+    department_id,
+    year,
+    class_number,
+    entries: list,
+    *,
+    branch: str = "Bachelor of Technology",
+    semester: int = 1,
+):
+    """Create/update students and persist ordered slot roster on the class profile."""
+    from models import Department, DepartmentClassProfile, Student
+
+    try:
+        year = int(year)
+        class_number = int(class_number)
+        semester = int(semester)
+    except (TypeError, ValueError):
+        return None, ["Valid year, class number, and semester are required."]
+
+    if year not in (1, 2, 3, 4):
+        return None, ["Year must be between 1 and 4."]
+
+    dept = Department.query.get(department_id) if department_id else None
+    if not dept:
+        return None, ["Department not found."]
+
+    dept_name = dept.name or ""
+    max_class = get_department_year_class_counts(department_id).get(year, 1)
+    if class_number < 1 or class_number > max_class:
+        return None, [f"Class {class_number} is not configured for year {year}."]
+
+    total_slots = department_year_target_count(department_id, year)
+    slot_start, slot_end = class_slot_range(class_number, total_slots, max_class)
+
+    seen_regs = set()
+    roster_payload = []
+    created = 0
+    updated = 0
+    errors = []
+
+    for idx, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            errors.append(f"Row {idx}: invalid entry.")
+            continue
+
+        register_number = (entry.get("register_number") or "").strip()
+        full_name = (entry.get("full_name") or entry.get("name") or "").strip()
+        if not register_number or not full_name:
+            errors.append(f"Row {idx}: register number and name are required.")
+            continue
+
+        reg_key = register_number.lower()
+        if reg_key in seen_regs:
+            errors.append(f"Row {idx}: duplicate register number in this save ({register_number}).")
+            continue
+        seen_regs.add(reg_key)
+
+        try:
+            slot = int(entry.get("slot") or 0)
+        except (TypeError, ValueError):
+            slot = 0
+        if slot < slot_start or slot > slot_end:
+            errors.append(
+                f"Row {idx}: slot must be between {slot_start} and {slot_end} for class {class_number}."
+            )
+            continue
+
+        existing = Student.query.filter_by(register_number=register_number).first()
+        if existing:
+            if (existing.department or "").strip().lower() != dept_name.lower():
+                errors.append(
+                    f"Row {idx}: register number {register_number} is already used in "
+                    f"{existing.department}. Use a unique register number."
+                )
+                continue
+            existing.full_name = full_name
+            existing.branch = branch or existing.branch
+            existing.year = year
+            existing.semester = semester
+            existing.department = dept_name
+            student = existing
+            updated += 1
+        else:
+            student = Student(
+                register_number=register_number,
+                full_name=full_name,
+                branch=branch or "Bachelor of Technology",
+                department=dept_name,
+                year=year,
+                semester=semester,
+            )
+            db.session.add(student)
+            db.session.flush()
+            created += 1
+
+        roster_payload.append(
+            {
+                "slot": slot,
+                "student_id": student.id,
+                "register_number": student.register_number,
+                "full_name": student.full_name,
+            }
+        )
+
+    if errors:
+        return None, errors
+
+    profile = DepartmentClassProfile.query.filter_by(
+        department_id=department_id, year=year, class_number=class_number
+    ).first()
+    if not profile:
+        profile = DepartmentClassProfile(
+            department_id=department_id,
+            year=year,
+            class_number=class_number,
+            department_name=dept_name,
+        )
+        db.session.add(profile)
+
+    existing_roster = {
+        int(item.get("slot")): item
+        for item in (profile.student_roster or [])
+        if item.get("slot") is not None
+    }
+    for item in roster_payload:
+        existing_roster[int(item["slot"])] = item
+    profile.student_roster = [
+        existing_roster[slot]
+        for slot in sorted(existing_roster.keys())
+        if slot_start <= slot <= slot_end
+    ]
+    db.session.commit()
+
+    profiles = get_department_class_profiles(department_id, year, dept_name)
+    return {
+        "created": created,
+        "updated": updated,
+        "count": len(roster_payload),
+        "class_profiles": profiles,
+    }, []
+
+
 def department_year_target_count(department_id, year) -> int:
     """Total slot count for a year (HOD setting, else named student count)."""
     try:

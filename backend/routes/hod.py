@@ -467,12 +467,17 @@ def delete_checklist_item(item_id):
     if not user or not user.department_id:
         return jsonify({"message": "Department not linked."}), 400
 
+    from models import Notification
+
     item = HodChecklistItem.query.filter_by(
         id=item_id, department_id=user.department_id
     ).first()
     if not item:
         return jsonify({"message": "Checklist item not found."}), 404
 
+    Notification.query.filter_by(checklist_item_id=item.id).delete(
+        synchronize_session=False
+    )
     db.session.delete(item)
     db.session.commit()
     return jsonify({"message": "Checklist item removed."}), 200
@@ -573,6 +578,67 @@ def hod_add_student():
     db.session.add(student)
     db.session.commit()
     return jsonify({"message": "Student added.", "student": student.to_dict()}), 201
+
+
+@hod_bp.route("/students/bulk", methods=["POST"])
+@jwt_required()
+@role_required("hod")
+def hod_add_students_bulk():
+    """Save or update multiple students for the HOD department in one request."""
+    user = _current_hod()
+    if not user or not user.department_id:
+        return jsonify({"message": "Department not linked."}), 400
+
+    from utils.department_service import save_class_student_roster
+
+    data = request.get_json(silent=True) or {}
+    entries = data.get("students") or []
+    if not isinstance(entries, list) or not entries:
+        return jsonify({"message": "Provide a non-empty students list."}), 400
+
+    branch = (data.get("branch") or "Bachelor of Technology").strip()
+    try:
+        year = int(data.get("year") or 0)
+        semester = int(data.get("semester") or 1)
+        class_number = int(data.get("class_number") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"message": "Valid year and semester are required."}), 400
+
+    if year not in (1, 2, 3, 4):
+        return jsonify({"message": "Year must be between 1 and 4."}), 400
+    if class_number < 1:
+        return jsonify({"message": "Class number is required for saving the name list."}), 400
+
+    result, errors = save_class_student_roster(
+        user.department_id,
+        year,
+        class_number,
+        entries,
+        branch=branch,
+        semester=semester,
+    )
+    if errors:
+        return jsonify({"message": " ".join(errors), "errors": errors}), 400
+
+    created = result.get("created", 0)
+    updated = result.get("updated", 0)
+    total = result.get("count", 0)
+    parts = []
+    if created:
+        parts.append(f"{created} added")
+    if updated:
+        parts.append(f"{updated} updated")
+    summary = ", ".join(parts) if parts else f"{total} saved"
+
+    return jsonify(
+        {
+            "message": f"Class {class_number} name list saved ({summary}).",
+            "count": total,
+            "created": created,
+            "updated": updated,
+            "class_profiles": result.get("class_profiles", []),
+        }
+    ), 200
 
 
 @hod_bp.route("/students/<int:student_id>", methods=["PUT"])

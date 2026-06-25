@@ -81,14 +81,94 @@ function buildStudentDisplayRows(students, targetCount, year, yearFacultyLabel =
   return target > 0 ? rows.slice(0, target) : rows
 }
 
-function InlineStudentRow({ row, departmentName, year, yearFacultyLabel, saving, onSave, onEdit, onDelete }) {
-  const [reg, setReg] = useState(row.register_number || '')
-  const [name, setName] = useState(row.full_name || '')
+function buildClassRowsFromProfile(
+  profile,
+  allStudents,
+  slotStart,
+  slotEnd,
+  year,
+  yearFacultyLabel = '',
+) {
+  const roster = profile?.student_roster || []
+  const byReg = new Map(
+    (allStudents || []).map((s) => [
+      String(s.register_number || '').trim().toLowerCase(),
+      s,
+    ]),
+  )
+  const rosterBySlot = new Map(roster.map((r) => [Number(r.slot), r]))
+  const rows = []
+
+  for (let slot = slotStart; slot <= slotEnd; slot += 1) {
+    const classSlot = slot - slotStart + 1
+    const rosterEntry = rosterBySlot.get(slot)
+    if (rosterEntry?.register_number) {
+      const dbStudent =
+        byReg.get(String(rosterEntry.register_number).trim().toLowerCase()) ||
+        (rosterEntry.student_id
+          ? (allStudents || []).find((s) => s.id === rosterEntry.student_id)
+          : null)
+      if (dbStudent) {
+        rows.push({
+          ...dbStudent,
+          slot,
+          classSlot,
+          isPlaceholder: false,
+        })
+        continue
+      }
+      rows.push({
+        id: rosterEntry.student_id || null,
+        register_number: rosterEntry.register_number,
+        full_name: rosterEntry.full_name || '',
+        branch: 'Bachelor of Technology',
+        semester: profile?.semester ?? 1,
+        year,
+        slot,
+        classSlot,
+        editable: true,
+        isPlaceholder: false,
+        faculty_name: yearFacultyLabel || null,
+      })
+      continue
+    }
+    rows.push({
+      id: null,
+      slot,
+      classSlot,
+      register_number: '',
+      full_name: '',
+      branch: 'Bachelor of Technology',
+      semester: profile?.semester ?? 1,
+      year,
+      editable: true,
+      isPlaceholder: true,
+      faculty_name: yearFacultyLabel || null,
+    })
+  }
+  return rows
+}
+
+function InlineStudentRow({
+  row,
+  departmentName,
+  year,
+  yearFacultyLabel,
+  saving,
+  draftReg,
+  draftName,
+  onDraftChange,
+  onSave,
+  onEdit,
+  onDelete,
+}) {
+  const [reg, setReg] = useState(row.register_number || draftReg || '')
+  const [name, setName] = useState(row.full_name || draftName || '')
 
   useEffect(() => {
-    setReg(row.register_number || '')
-    setName(row.full_name || '')
-  }, [row.register_number, row.full_name, row.slot])
+    setReg(row.register_number || draftReg || '')
+    setName(row.full_name || draftName || '')
+  }, [row.register_number, row.full_name, row.slot, draftReg, draftName])
 
   if (row.isPlaceholder) {
     return (
@@ -97,7 +177,10 @@ function InlineStudentRow({ row, departmentName, year, yearFacultyLabel, saving,
         <td className="px-4 py-2">
           <input
             value={reg}
-            onChange={(e) => setReg(e.target.value)}
+            onChange={(e) => {
+              setReg(e.target.value)
+              onDraftChange?.(row.slot, 'register_number', e.target.value)
+            }}
             placeholder="Reg. no"
             className="w-full min-w-[88px] rounded border border-slate-200 px-2 py-1 text-sm font-mono"
           />
@@ -105,7 +188,10 @@ function InlineStudentRow({ row, departmentName, year, yearFacultyLabel, saving,
         <td className="px-4 py-2">
           <input
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value)
+              onDraftChange?.(row.slot, 'full_name', e.target.value)
+            }}
             placeholder="Student name"
             className="w-full min-w-[140px] rounded border border-slate-200 px-2 py-1 text-sm"
           />
@@ -119,7 +205,13 @@ function InlineStudentRow({ row, departmentName, year, yearFacultyLabel, saving,
           <button
             type="button"
             disabled={saving || !reg.trim() || !name.trim()}
-            onClick={() => onSave({ register_number: reg.trim(), full_name: name.trim() })}
+            onClick={() =>
+              onSave({
+                slot: row.slot,
+                register_number: reg.trim(),
+                full_name: name.trim(),
+              })
+            }
             className="text-xs font-medium text-navy hover:underline disabled:opacity-40"
           >
             Save
@@ -189,6 +281,7 @@ export default function HodStatDetailsModal({
   const [activeClass, setActiveClass] = useState(1)
   const [classForm, setClassForm] = useState(emptyClassForm(1, ''))
   const [savingClassProfile, setSavingClassProfile] = useState(false)
+  const [rowDrafts, setRowDrafts] = useState({})
 
   const isStudentView = type?.startsWith('students_year_')
   const departmentName = dashboardData?.department_detail?.name || dashboardData?.department || ''
@@ -231,6 +324,7 @@ export default function HodStatDetailsModal({
       setItems([])
     } finally {
       setLoading(false)
+      setRowDrafts({})
     }
   }, [meta, type, dashboardData, isStudentView])
 
@@ -294,6 +388,18 @@ export default function HodStatDetailsModal({
       start = range.start
       end = range.end
     }
+
+    if (profile?.student_roster?.length) {
+      return buildClassRowsFromProfile(
+        profile,
+        items,
+        start,
+        end,
+        meta?.year,
+        yearFacultyLabel,
+      )
+    }
+
     return studentDisplayRows
       .filter((row) => row.slot >= start && row.slot <= end)
       .map((row, idx) => ({ ...row, classSlot: idx + 1 }))
@@ -304,6 +410,9 @@ export default function HodStatDetailsModal({
     activeClass,
     displayStudentCount,
     classesNum,
+    items,
+    meta?.year,
+    yearFacultyLabel,
   ])
 
   const filtered = useMemo(() => {
@@ -378,6 +487,32 @@ export default function HodStatDetailsModal({
     }
   }
 
+  const draftKey = (slot) => `c${activeClass}-s${slot}`
+
+  const handleDraftChange = (slot, field, value) => {
+    const key = draftKey(slot)
+    setRowDrafts((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], [field]: value },
+    }))
+  }
+
+  const collectDraftEntriesForClass = () => {
+    return classStudentRows
+      .filter((row) => row.isPlaceholder)
+      .map((row) => {
+        const draft = rowDrafts[draftKey(row.slot)] || {}
+        return {
+          slot: row.slot,
+          register_number: (draft.register_number || '').trim(),
+          full_name: (draft.full_name || '').trim(),
+        }
+      })
+      .filter((entry) => entry.register_number && entry.full_name)
+  }
+
+  const filledDraftCount = collectDraftEntriesForClass().length
+
   const perClass =
     displayStudentCount && classesNum
       ? Math.ceil((displayStudentCount / classesNum) * 10) / 10
@@ -389,18 +524,58 @@ export default function HodStatDetailsModal({
     setSaving(true)
     setError('')
     try {
-      await hodAPI.addStudent({
-        ...payload,
-        branch: 'Bachelor of Technology',
-        department: departmentName,
+      const res = await hodAPI.addStudentsBulk({
         year: meta.year,
-        semester: 1,
+        semester: parseInt(classForm.semester, 10) || 1,
+        class_number: activeClass,
+        branch: 'Bachelor of Technology',
+        students: [
+          {
+            slot: payload.slot,
+            register_number: payload.register_number,
+            full_name: payload.full_name,
+          },
+        ],
       })
-      setMessage('Student added to list.')
+      if (res.data.class_profiles?.length) {
+        setClassProfiles(res.data.class_profiles)
+      }
+      setMessage(res.data.message || 'Student added to list.')
       await load()
       onRefresh?.()
     } catch (err) {
       setError(err.response?.data?.message || 'Could not add student.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSaveAllClassNames = async () => {
+    const entries = collectDraftEntriesForClass()
+    if (!entries.length) {
+      setError('Enter at least one register number and student name, then save the list.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    setMessage('')
+    try {
+      const res = await hodAPI.addStudentsBulk({
+        year: meta.year,
+        semester: parseInt(classForm.semester, 10) || 1,
+        class_number: activeClass,
+        branch: 'Bachelor of Technology',
+        students: entries,
+      })
+      if (res.data.class_profiles?.length) {
+        setClassProfiles(res.data.class_profiles)
+      }
+      setMessage(res.data.message || `Saved ${entries.length} student(s).`)
+      setRowDrafts({})
+      await load()
+      onRefresh?.()
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not save student list.')
     } finally {
       setSaving(false)
     }
@@ -457,7 +632,7 @@ export default function HodStatDetailsModal({
   const footerText = loading
     ? '—'
     : isStudentView
-      ? `Class ${activeClass}: ${filtered.length} row(s) · ${filtered.filter((s) => s.full_name || s.register_number).length} named in this class`
+      ? `Class ${activeClass}: ${filtered.length} row(s) · ${filtered.filter((s) => !s.isPlaceholder && (s.full_name || s.register_number)).length} named in this class`
       : `${filtered.length} of ${items.length} records`
 
   const scrollWrapClass = embedded
@@ -586,8 +761,15 @@ export default function HodStatDetailsModal({
             )}
             {displayStudentCount > 0 && (
               <p className="mt-2 text-xs font-medium text-navy">
-                Name list: {filledCount} filled · {Math.max(0, displayStudentCount - filledCount)}{' '}
+                Name list: {filledCount} saved · {Math.max(0, displayStudentCount - filledCount)}{' '}
                 empty slot{displayStudentCount - filledCount === 1 ? '' : 's'} below
+              </p>
+            )}
+            {displayStudentCount > 0 && (
+              <p className="mt-1 text-xs text-amber-800">
+                Saving student count above only opens empty rows. Enter names below, then click{' '}
+                <strong>Save all names in this class</strong>. Register numbers must be unique
+                across all departments (e.g. FT26001, not 1).
               </p>
             )}
             {rosterCount != null && rosterCount !== displayStudentCount && (
@@ -727,20 +909,32 @@ export default function HodStatDetailsModal({
 
         {isStudentView && displayStudentCount > 0 && (
           <div className="border-b border-slate-100 px-6 py-3">
-            <button
-              type="button"
-              onClick={() => {
-                setAdding(true)
-                setEditingId(null)
-                setForm({
-                  ...emptyStudentForm(departmentName),
-                  year: String(meta.year),
-                })
-              }}
-              className="rounded-lg bg-navy px-4 py-2 text-xs font-semibold text-white hover:bg-navy-dark"
-            >
-              + Add student
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setAdding(true)
+                  setEditingId(null)
+                  setForm({
+                    ...emptyStudentForm(departmentName),
+                    year: String(meta.year),
+                  })
+                }}
+                className="rounded-lg bg-navy px-4 py-2 text-xs font-semibold text-white hover:bg-navy-dark"
+              >
+                + Add student
+              </button>
+              {filledDraftCount > 0 && (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={handleSaveAllClassNames}
+                  className="rounded-lg border border-navy px-4 py-2 text-xs font-semibold text-navy hover:bg-navy/5 disabled:opacity-50"
+                >
+                  {saving ? 'Saving…' : `Save all names in this class (${filledDraftCount})`}
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -967,6 +1161,9 @@ export default function HodStatDetailsModal({
                       year={meta.year}
                       yearFacultyLabel={yearFacultyLabel}
                       saving={saving}
+                      draftReg={rowDrafts[draftKey(s.slot)]?.register_number}
+                      draftName={rowDrafts[draftKey(s.slot)]?.full_name}
+                      onDraftChange={s.isPlaceholder ? handleDraftChange : undefined}
                       onSave={handleSavePlaceholderRow}
                       onEdit={startEdit}
                       onDelete={handleDeleteStudent}

@@ -36,7 +36,7 @@ def create_app(config_class=Config):
     from database.migrate_department_year_settings import apply_department_year_settings_schema
     from database.migrate_course_assignment_class import apply_course_assignment_class_schema
     from database.migrate_department_class_profiles import apply_department_class_profiles_schema
-    from utils.db_migration import add_column_if_missing, datetime_type
+    from utils.db_migration import add_column_if_missing, datetime_type, json_text_default
 
     apply_marksheet_schema_updates()
     apply_hod_checklist_schema()
@@ -45,6 +45,11 @@ def create_app(config_class=Config):
     apply_course_assignment_class_schema()
     apply_department_class_profiles_schema()
     add_column_if_missing("users", "last_login_at", datetime_type())
+    add_column_if_missing(
+        "department_class_profiles",
+        "student_roster",
+        json_text_default().replace("'{}'", "'[]'"),
+    )
     repair_marksheet_departments()
 
   @app.route("/api/health", methods=["GET"])
