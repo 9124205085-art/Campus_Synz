@@ -61,9 +61,33 @@ def create_app(config_class=Config):
     )
     repair_marksheet_departments()
 
+    from database.seed import seed_users
+
+    seed_users()
+
   @app.route("/api/health", methods=["GET"])
   def health():
     return jsonify({"status": "ok", "message": "College Management System API is running."})
+
+  @app.route("/api/health/db", methods=["GET"])
+  def health_db():
+    """Diagnostic: which database the backend uses and whether admin exists."""
+    from models import User
+
+    try:
+      dialect = db.engine.dialect.name
+      user_count = User.query.count()
+      admin = User.query.filter_by(email="admin@kcgcollege.edu").first()
+      return jsonify(
+        {
+          "status": "ok",
+          "dialect": dialect,
+          "user_count": user_count,
+          "admin_exists": admin is not None,
+        }
+      )
+    except Exception as exc:
+      return jsonify({"status": "error", "message": str(exc)}), 500
 
   @jwt.unauthorized_loader
   def unauthorized_callback(reason):

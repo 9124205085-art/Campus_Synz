@@ -9,41 +9,8 @@ from app import create_app
 from database.migrate_departments import migrate
 from database.migrate_marksheet_v2 import migrate as migrate_marksheet_v2
 from database.migrate_rbac_v1 import migrate as migrate_rbac_v1
+from database.seed import seed_users
 from extensions import db
-from models import User
-from utils.helpers import get_or_create_department
-
-
-def seed_users():
-    """Create default admin account if it does not exist."""
-    admin_dept = get_or_create_department("Administration")
-
-    admin_data = {
-        "username": "admin",
-        "email": "admin@kcgcollege.edu",
-        "password": "Admin@123",
-        "role": "admin",
-        "full_name": "System Administrator",
-        "department_id": admin_dept.id,
-    }
-
-    existing = User.query.filter_by(username=admin_data["username"]).first()
-    if existing:
-        if not existing.department_id:
-            existing.department_id = admin_data["department_id"]
-        db.session.commit()
-        return
-
-    user = User(
-        username=admin_data["username"],
-        email=admin_data["email"],
-        role=admin_data["role"],
-        full_name=admin_data["full_name"],
-        department_id=admin_data["department_id"],
-    )
-    user.set_password(admin_data["password"])
-    db.session.add(user)
-    db.session.commit()
 
 
 def init_database():
