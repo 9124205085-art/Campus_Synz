@@ -151,8 +151,7 @@ Students from the database appear only when you choose “Load from database” 
 | Role    | Username     | Password    |
 |---------|--------------|-------------|
 | Admin   | `admin@kcgcollege.edu` | `Admin@123` |
-| HOD     | `hod.cse@kcgcollege.edu` | `Hod@123`   |
-| Faculty | `faculty.cse@kcgcollege.edu` | `Faculty@123` |
+
 
 ## API Endpoints
 
